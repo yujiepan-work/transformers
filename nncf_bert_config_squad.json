@@ -1,0 +1,46 @@
+{
+    "input_info": [
+        {
+            "sample_size": [1, 384],
+            "type": "long"
+        },
+        {
+            "sample_size": [1, 384],
+            "type": "long"
+        },
+        {
+            "sample_size": [1, 384],
+            "type": "long"
+        }
+    ],
+    "compression": {
+        "algorithm": "quantization",
+        "initializer": {
+            "range": {
+                "num_init_samples": 32,
+                "type": "percentile",
+                "params":
+                {
+                    "min_percentile": 0.01,
+                    "max_percentile": 99.99
+                }
+            }
+        },
+        "ignored_scopes": ["{re}BertSelfAttention\\[self\\]/__add___0",
+            "{re}BertIntermediate\\[intermediate\\]/__mul___0",
+            "{re}BertIntermediate\\[intermediate\\]/NNCFLinear\\[dense\\]/linear_0"],
+        "activations":
+        {
+            "mode": "symmetric",
+            "ignored_scopes": ["{re}BertSelfAttention\\[self\\]/NNCFLinear\\[(key)|(query)|(value)\\].*",
+            "{re}BertForQuestionAnswering/BertModel\\[bert\\]/BertEmbeddings\\[embeddings\\]/__add___0",
+            "{re}BertForQuestionAnswering/BertModel\\[bert\\]/BertEmbeddings\\[embeddings\\]/__add___1",
+            "{re}BertOutput\\[output\\]/__add___0"]
+        },
+        "weights":
+        {
+            "mode": "symmetric",
+            "signed": true
+        }
+    }
+}

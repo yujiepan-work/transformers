@@ -119,6 +119,7 @@ class Attention(nn.Module):
         self.n_head = config.n_head
         self.split_size = n_state
         self.scale = scale
+        self.n_ctx = n_ctx
 
         self.c_attn = Conv1D(n_state * 3, nx)
         self.c_proj = Conv1D(n_state, nx)
@@ -147,7 +148,9 @@ class Attention(nn.Module):
         w = torch.matmul(q, k)
         if self.scale:
             w = w / (float(v.size(-1)) ** 0.5)
-        nd, ns = w.size(-2), w.size(-1)
+        # Had to comment this out and use static size - wouldn't let export to ONNX otherwise
+        # nd, ns = w.size(-2), w.size(-1)
+        nd, ns = self.n_ctx, self.n_ctx
         mask = self.bias[:, :, ns - nd : ns, :ns]
         w = torch.where(mask.bool(), w, self.masked_bias.to(w.dtype))
 

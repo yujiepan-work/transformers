@@ -143,6 +143,7 @@ runs
 # data
 /data
 serialization_dir
+cached*
 
 # emacs
 *.*~

@@ -1365,7 +1365,7 @@ class PreTrainedTokenizerBase(SpecialTokensMixin):
             write_dict = {}
             for key, value in self.special_tokens_map_extended.items():
                 if isinstance(value, AddedToken):
-                    write_dict[key] = value.__getstate__()
+                    write_dict[key] = value.content  # Remove this edit once the related AttributeError is fixed upstream
                 else:
                     write_dict[key] = value
             f.write(json.dumps(write_dict, ensure_ascii=False))

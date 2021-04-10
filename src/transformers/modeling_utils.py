@@ -24,6 +24,9 @@ from torch import Tensor, device, dtype, nn
 from torch.nn import CrossEntropyLoss
 from torch.nn import functional as F
 
+from nncf import create_compressed_model
+
+
 from .activations import get_activation
 from .configuration_utils import PretrainedConfig
 from .file_utils import (
@@ -471,7 +474,8 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin):
 
         self.base_model._prune_heads(heads_to_prune)
 
-    def save_pretrained(self, save_directory):
+    def save_pretrained(self, save_directory,
+                        saved_module_override=None):
         """ Save a model and its configuration file to a directory, so that it
             can be re-loaded using the `:func:`~transformers.PreTrainedModel.from_pretrained`` class method.
 
@@ -492,6 +496,8 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin):
         # If we save using the predefined names, we can load using `from_pretrained`
         output_model_file = os.path.join(save_directory, WEIGHTS_NAME)
 
+        module_to_save = model_to_save if saved_module_override is None else saved_module_override
+
         if getattr(self.config, "xla_device", False):
             import torch_xla.core.xla_model as xm
 
@@ -499,10 +505,10 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin):
                 # Save configuration file
                 model_to_save.config.save_pretrained(save_directory)
             # xm.save takes care of saving only from master
-            xm.save(model_to_save.state_dict(), output_model_file)
+            xm.save(module_to_save.state_dict(), output_model_file)
         else:
             model_to_save.config.save_pretrained(save_directory)
-            torch.save(model_to_save.state_dict(), output_model_file)
+            torch.save(module_to_save.state_dict(), output_model_file)
 
         logger.info("Model weights saved in {}".format(output_model_file))
 
@@ -588,6 +594,8 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin):
         output_loading_info = kwargs.pop("output_loading_info", False)
         local_files_only = kwargs.pop("local_files_only", False)
         use_cdn = kwargs.pop("use_cdn", True)
+        nncf_config = kwargs.pop("nncf_config", None)
+        nncf_eval = kwargs.pop("nncf_eval", False)
 
         # Load config if we don't provide a configuration
         if not isinstance(config, PretrainedConfig):
@@ -679,6 +687,11 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin):
                     "Unable to load weights from pytorch checkpoint file. "
                     "If you tried to load a PyTorch model from a TF 2.0 checkpoint, please set from_tf=True. "
                 )
+
+        if nncf_config is not None and nncf_eval:
+            compression_algo_controller, model = create_compressed_model(model, nncf_config,
+                                                                         resuming_state_dict=state_dict)
+            return compression_algo_controller, model
 
         missing_keys = []
         unexpected_keys = []
@@ -786,6 +799,10 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin):
         # Set model in evaluation mode to deactivate DropOut modules by default
         model.eval()
 
+        if nncf_config is not None:
+            compression_algo_controller, model = create_compressed_model(model, nncf_config)
+            return compression_algo_controller, model
+
         if output_loading_info:
             loading_info = {
                 "missing_keys": missing_keys,
@@ -802,7 +819,8 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin):
 
         return model
 
-
+import nncf
+@nncf.register_module()
 class Conv1D(nn.Module):
     def __init__(self, nf, nx):
         """ Conv1D layer as defined by Radford et al. for OpenAI GPT (and also used in GPT-2)

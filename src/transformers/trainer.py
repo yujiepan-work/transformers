@@ -10,6 +10,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
+from nncf.compression_method_api import PTCompressionAlgorithmController
 from packaging import version
 from torch import nn
 from torch.utils.data.dataloader import DataLoader
@@ -17,6 +18,7 @@ from torch.utils.data.dataset import Dataset
 from torch.utils.data.distributed import DistributedSampler
 from torch.utils.data.sampler import RandomSampler, Sampler, SequentialSampler
 from tqdm.auto import tqdm, trange
+from transformers import is_torch_tpu_available
 
 from .data.data_collator import DataCollator, default_data_collator
 from .file_utils import is_apex_available, is_torch_tpu_available
@@ -184,6 +186,7 @@ class Trainer:
         prediction_loss_only=False,
         tb_writer: Optional["SummaryWriter"] = None,
         optimizers: Tuple[torch.optim.Optimizer, torch.optim.lr_scheduler.LambdaLR] = None,
+        compression_ctrl: PTCompressionAlgorithmController = None
     ):
         self.model = model.to(args.device)
         self.args = args
@@ -225,6 +228,8 @@ class Trainer:
                 ),
                 FutureWarning,
             )
+
+        self.compression_ctrl = compression_ctrl
 
     def get_train_dataloader(self) -> DataLoader:
         """
@@ -417,6 +422,9 @@ class Trainer:
 
         # Distributed training (should be after apex fp16 initialization)
         if self.args.local_rank != -1:
+            if self.compression_ctrl is not None:
+                self.compression_ctrl.distributed()
+
             model = torch.nn.parallel.DistributedDataParallel(
                 model,
                 device_ids=[self.args.local_rank],
@@ -450,7 +458,7 @@ class Trainer:
         epochs_trained = 0
         steps_trained_in_current_epoch = 0
         # Check if continuing training from a checkpoint
-        if model_path is not None:
+        if model_path is not None and self.compression_ctrl is None:
             # set global_step to global_step of last saved checkpoint from model path
             try:
                 self.global_step = int(model_path.split("-")[-1].split("/")[0])
@@ -496,7 +504,9 @@ class Trainer:
                     steps_trained_in_current_epoch -= 1
                     continue
 
-                tr_loss += self._training_step(model, inputs, optimizer)
+                curr_loss = self._training_step(model, inputs, optimizer)
+                epoch_iterator.set_postfix(loss=curr_loss)
+                tr_loss += curr_loss
 
                 if (step + 1) % self.args.gradient_accumulation_steps == 0 or (
                     # last step in epoch but step is always smaller than gradient_accumulation_steps
@@ -515,6 +525,10 @@ class Trainer:
 
                     scheduler.step()
                     model.zero_grad()
+
+                    if self.compression_ctrl is not None:
+                        self.compression_ctrl.scheduler.step()
+
                     self.global_step += 1
                     self.epoch = epoch + (step + 1) / len(epoch_iterator)
 
@@ -530,6 +544,13 @@ class Trainer:
                             else scheduler.get_lr()[0]
                         )
                         logging_loss = tr_loss
+
+                        if self.compression_ctrl is not None:
+                            logs["compression_loss"] = self.compression_ctrl.loss()
+                            compression_stats = self.compression_ctrl.statistics()
+                            for key, value in compression_stats.items():
+                                if isinstance(value, (int, float)):
+                                    logs["compression/statistics/{0}".format(key)] = value
 
                         self._log(logs)
 
@@ -630,6 +651,10 @@ class Trainer:
         if self.args.gradient_accumulation_steps > 1:
             loss = loss / self.args.gradient_accumulation_steps
 
+        if self.compression_ctrl is not None:
+            compression_loss = self.compression_ctrl.loss()
+            loss += compression_loss
+
         if self.args.fp16:
             with amp.scale_loss(loss, optimizer) as scaled_loss:
                 scaled_loss.backward()
@@ -688,9 +713,12 @@ class Trainer:
         logger.info("Saving model checkpoint to %s", output_dir)
         # Save a trained model and configuration using `save_pretrained()`.
         # They can then be reloaded using `from_pretrained()`
-        if not isinstance(self.model, PreTrainedModel):
-            raise ValueError("Trainer.model appears to not be a PreTrainedModel")
-        self.model.save_pretrained(output_dir)
+
+        model_to_save = (
+            self.model.module if hasattr(self.model, "module") and self.compression_ctrl is None else self.model
+        )  # Take care of distributed/parallel training
+
+        model_to_save.save_pretrained(output_dir, saved_module_override=model_to_save)
 
         # Good practice: save your training arguments together with the trained model
         torch.save(self.args, os.path.join(output_dir, "training_args.bin"))
@@ -884,3 +912,30 @@ class Trainer:
         # truncate the dummy elements added by SequentialDistributedSampler
         output = concat[:num_total_examples]
         return output
+
+
+def get_train_dataloader_for_init(args, train_dataset, data_collator=None):
+    if is_torch_tpu_available():
+        train_sampler = get_tpu_sampler(train_dataset)
+    else:
+        from torch.utils.data import RandomSampler
+        from torch.utils.data import DistributedSampler
+        train_sampler = (
+            RandomSampler(train_dataset)
+            if args.local_rank == -1
+            else DistributedSampler(train_dataset)
+        )
+
+    if data_collator is None:
+        from transformers.data.data_collator import default_data_collator
+        data_collator = default_data_collator
+
+    from torch.utils.data import DataLoader
+    data_loader = DataLoader(
+        train_dataset,
+        batch_size=args.train_batch_size,
+        sampler=train_sampler,
+        collate_fn=data_collator,
+        drop_last=args.dataloader_drop_last,
+    )
+    return data_loader

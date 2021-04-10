@@ -26,6 +26,8 @@ import os
 from dataclasses import dataclass, field
 from typing import Optional
 
+import torch
+from torch import onnx
 from transformers import (
     CONFIG_MAPPING,
     MODEL_WITH_LM_HEAD_MAPPING,
@@ -43,8 +45,14 @@ from transformers import (
 )
 
 
-logger = logging.getLogger(__name__)
+from nncf import NNCFConfig
+from nncf.structures import QuantizationRangeInitArgs
+from nncf.initialization import InitializingDataLoader
+from transformers.trainer import get_train_dataloader_for_init
 
+logger = logging.getLogger(__name__)
+# from nncf import set_log_level
+# set_log_level(logging.DEBUG)
 
 MODEL_CONFIG_CLASSES = list(MODEL_WITH_LM_HEAD_MAPPING.keys())
 MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
@@ -192,30 +200,13 @@ def main():
             "and load it from here, using --tokenizer_name"
         )
 
-    if model_args.model_name_or_path:
-        model = AutoModelWithLMHead.from_pretrained(
-            model_args.model_name_or_path,
-            from_tf=bool(".ckpt" in model_args.model_name_or_path),
-            config=config,
-            cache_dir=model_args.cache_dir,
-        )
-    else:
-        logger.info("Training new model from scratch")
-        model = AutoModelWithLMHead.from_config(config)
-
-    model.resize_token_embeddings(len(tokenizer))
-
-    if config.model_type in ["bert", "roberta", "distilbert", "camembert"] and not data_args.mlm:
-        raise ValueError(
-            "BERT and RoBERTa-like models do not have LM heads but masked LM heads. They must be run using the --mlm "
-            "flag (masked language modeling)."
-        )
 
     if data_args.block_size <= 0:
         data_args.block_size = tokenizer.max_len
         # Our input block size will be the max possible for the model
     else:
         data_args.block_size = min(data_args.block_size, tokenizer.max_len)
+
 
     # Get datasets
 
@@ -225,6 +216,62 @@ def main():
         tokenizer=tokenizer, mlm=data_args.mlm, mlm_probability=data_args.mlm_probability
     )
 
+    nncf_config = None
+    if training_args.nncf_config is not None:
+        nncf_config = NNCFConfig.from_json(training_args.nncf_config)
+        if nncf_config.get("log_dir") is None:
+            nncf_config["log_dir"] = training_args.output_dir
+        if not os.path.exists(training_args.output_dir) and training_args.local_rank in [-1, 0]:
+            os.makedirs(nncf_config["log_dir"])
+        if training_args.do_train:
+            train_dataloader = get_train_dataloader_for_init(training_args, train_dataset,
+                                                             data_collator)
+
+            class WikitextInitializingDataLoader(InitializingDataLoader):
+                def get_inputs(self, dataloader_output):
+                    return (), dataloader_output
+
+            nncf_config.register_extra_structs(
+                [QuantizationRangeInitArgs(WikitextInitializingDataLoader(train_dataloader))])
+
+    if model_args.model_name_or_path:
+        retval = AutoModelWithLMHead.from_pretrained(
+            model_args.model_name_or_path,
+            from_tf=bool(".ckpt" in model_args.model_name_or_path),
+            config=config,
+            cache_dir=model_args.cache_dir,
+            nncf_config=nncf_config,
+            nncf_eval=nncf_config is not None and training_args.do_eval and not training_args.do_train
+        )
+    else:
+        logger.info("Training new model from scratch")
+        retval = AutoModelWithLMHead.from_config(config)
+
+    if nncf_config is None:
+        model = retval
+        compression_ctrl = None
+    else:
+        compression_ctrl, model = retval
+
+    model.resize_token_embeddings(len(tokenizer))
+
+    if config.model_type in ["bert", "roberta", "distilbert", "camembert"] and not data_args.mlm:
+        raise ValueError(
+            "BERT and RoBERTa-like models do not have LM heads but masked LM heads. They must be run using the --mlm "
+            "flag (masked language modeling)."
+        )
+
+
+    if training_args.to_onnx:
+        # Expecting the following forward signature:
+        # (input_ids, attention_mask, token_type_ids, ...)
+        if nncf_config is not None:
+            compression_ctrl.export_model(training_args.to_onnx)
+        else:
+            model.to('cpu')
+            dummy_tensor = torch.ones([1, config.n_positions], dtype=torch.long)
+            onnx.export(model, dummy_tensor, training_args.to_onnx)
+
     # Initialize our Trainer
     trainer = Trainer(
         model=model,
@@ -233,6 +280,7 @@ def main():
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         prediction_loss_only=True,
+        compression_ctrl=compression_ctrl
     )
 
     # Training

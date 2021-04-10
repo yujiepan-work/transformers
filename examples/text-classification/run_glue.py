@@ -24,6 +24,9 @@ from dataclasses import dataclass, field
 from typing import Callable, Dict, Optional
 
 import numpy as np
+from nncf import NNCFConfig
+from nncf.structures import QuantizationRangeInitArgs
+from nncf.initialization import InitializingDataLoader
 
 from transformers import AutoConfig, AutoModelForSequenceClassification, AutoTokenizer, EvalPrediction, GlueDataset
 from transformers import GlueDataTrainingArguments as DataTrainingArguments
@@ -36,7 +39,7 @@ from transformers import (
     glue_tasks_num_labels,
     set_seed,
 )
-
+from transformers.trainer import get_train_dataloader_for_init
 
 logger = logging.getLogger(__name__)
 
@@ -126,14 +129,42 @@ def main():
         model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
         cache_dir=model_args.cache_dir,
     )
-    model = AutoModelForSequenceClassification.from_pretrained(
+
+    # Get datasets
+    train_dataset = GlueDataset(data_args, tokenizer=tokenizer) if training_args.do_train else None
+
+    nncf_config = None
+    if training_args.nncf_config is not None:
+        nncf_config = NNCFConfig.from_json(training_args.nncf_config)
+        if nncf_config.get("log_dir") is None:
+            nncf_config["log_dir"] = training_args.output_dir
+        if not os.path.exists(training_args.output_dir) and training_args.local_rank in [-1, 0]:
+            os.makedirs(nncf_config["log_dir"])
+        if training_args.do_train:
+            train_dataloader = get_train_dataloader_for_init(training_args, train_dataset)
+
+            class GlueInitializingDataLoader(InitializingDataLoader):
+                def get_inputs(self, dataloader_output):
+                    return (), dataloader_output
+
+            nncf_config.register_extra_structs(
+                [QuantizationRangeInitArgs(GlueInitializingDataLoader(train_dataloader))])
+
+    retval = AutoModelForSequenceClassification.from_pretrained(
         model_args.model_name_or_path,
         from_tf=bool(".ckpt" in model_args.model_name_or_path),
         config=config,
         cache_dir=model_args.cache_dir,
+        nncf_config=nncf_config,
+        nncf_eval=nncf_config is not None and training_args.do_eval and not training_args.do_train
     )
 
-    # Get datasets
+    if nncf_config is None:
+        model = retval
+        compression_ctrl = None
+    else:
+        compression_ctrl, model = retval
+            
     train_dataset = (
         GlueDataset(data_args, tokenizer=tokenizer, cache_dir=model_args.cache_dir) if training_args.do_train else None
     )
@@ -165,6 +196,7 @@ def main():
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         compute_metrics=build_compute_metrics_fn(data_args.task_name),
+        compression_ctrl=compression_ctrl
     )
 
     # Training

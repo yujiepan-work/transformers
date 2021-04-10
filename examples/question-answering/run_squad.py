@@ -25,9 +25,11 @@ import timeit
 
 import numpy as np
 import torch
+from nncf.structures import QuantizationRangeInitArgs
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm, trange
+from torch import onnx
 
 from transformers import (
     MODEL_FOR_QUESTION_ANSWERING_MAPPING,
@@ -52,6 +54,8 @@ try:
 except ImportError:
     from tensorboardX import SummaryWriter
 
+from nncf import NNCFConfig
+from nncf.initialization import InitializingDataLoader
 
 logger = logging.getLogger(__name__)
 
@@ -71,14 +75,19 @@ def to_list(tensor):
     return tensor.detach().cpu().tolist()
 
 
-def train(args, train_dataset, model, tokenizer):
+def get_train_dataloader(args, train_dataset):
+    args.train_batch_size = args.per_gpu_train_batch_size * max(1, args.n_gpu)
+    train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
+    train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size)
+    return train_dataloader
+
+
+def train(args, train_dataset, model, tokenizer, compression_ctrl=None):
     """ Train the model """
     if args.local_rank in [-1, 0]:
         tb_writer = SummaryWriter()
 
-    args.train_batch_size = args.per_gpu_train_batch_size * max(1, args.n_gpu)
-    train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
-    train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size)
+    train_dataloader = get_train_dataloader(args, train_dataset)
 
     if args.max_steps > 0:
         t_total = args.max_steps
@@ -144,7 +153,7 @@ def train(args, train_dataset, model, tokenizer):
     epochs_trained = 0
     steps_trained_in_current_epoch = 0
     # Check if continuing training from a checkpoint
-    if os.path.exists(args.model_name_or_path):
+    if os.path.exists(args.model_name_or_path) and compression_ctrl is None:
         try:
             # set global_step to gobal_step of last saved checkpoint from model path
             checkpoint_suffix = args.model_name_or_path.split("-")[-1].split("/")[0]
@@ -200,6 +209,7 @@ def train(args, train_dataset, model, tokenizer):
                     )
 
             outputs = model(**inputs)
+
             # model outputs are always tuple in transformers (see doc)
             loss = outputs[0]
 
@@ -208,6 +218,10 @@ def train(args, train_dataset, model, tokenizer):
             if args.gradient_accumulation_steps > 1:
                 loss = loss / args.gradient_accumulation_steps
 
+            if compression_ctrl is not None:
+                compression_loss = compression_ctrl.loss()
+                loss += compression_loss
+
             if args.fp16:
                 with amp.scale_loss(loss, optimizer) as scaled_loss:
                     scaled_loss.backward()
@@ -215,6 +229,8 @@ def train(args, train_dataset, model, tokenizer):
                 loss.backward()
 
             tr_loss += loss.item()
+
+            epoch_iterator.set_postfix(loss=loss.item())
             if (step + 1) % args.gradient_accumulation_steps == 0:
                 if args.fp16:
                     torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.max_grad_norm)
@@ -223,6 +239,10 @@ def train(args, train_dataset, model, tokenizer):
 
                 optimizer.step()
                 scheduler.step()  # Update learning rate schedule
+
+                if compression_ctrl is not None:
+                    compression_ctrl.scheduler.step()
+
                 model.zero_grad()
                 global_step += 1
 
@@ -237,12 +257,20 @@ def train(args, train_dataset, model, tokenizer):
                     tb_writer.add_scalar("loss", (tr_loss - logging_loss) / args.logging_steps, global_step)
                     logging_loss = tr_loss
 
+                    if compression_ctrl is not None:
+                        tb_writer.add_scalar("compression_loss", compression_loss.item())
+                        compression_stats = compression_ctrl.statistics()
+                        for key, value in compression_stats.items():
+                            if isinstance(value, (int, float)):
+                                tb_writer.add_scalar("compression/statistics/{0}".format(key), value,
+                                                     global_step)
+
                 # Save model checkpoint
                 if args.local_rank in [-1, 0] and args.save_steps > 0 and global_step % args.save_steps == 0:
                     output_dir = os.path.join(args.output_dir, "checkpoint-{}".format(global_step))
-                    # Take care of distributed/parallel training
-                    model_to_save = model.module if hasattr(model, "module") else model
-                    model_to_save.save_pretrained(output_dir)
+
+                    model_to_save = model.module if hasattr(model, 'module') else model  # Take care of distributed/parallel training
+                    model_to_save.save_pretrained(output_dir, saved_module_override=model_to_save)
                     tokenizer.save_pretrained(output_dir)
 
                     torch.save(args, os.path.join(output_dir, "training_args.bin"))
@@ -255,10 +283,13 @@ def train(args, train_dataset, model, tokenizer):
             if args.max_steps > 0 and global_step > args.max_steps:
                 epoch_iterator.close()
                 break
+
+        if compression_ctrl is not None:
+            compression_ctrl.scheduler.epoch_step()
+
         if args.max_steps > 0 and global_step > args.max_steps:
             train_iterator.close()
             break
-
     if args.local_rank in [-1, 0]:
         tb_writer.close()
 
@@ -658,6 +689,11 @@ def main():
     parser.add_argument("--server_port", type=str, default="", help="Can be used for distant debugging.")
 
     parser.add_argument("--threads", type=int, default=1, help="multiple threads for converting example to features")
+    parser.add_argument('--to_onnx', type=str, metavar='PATH', default=None,
+                        help='Export to ONNX model by given path')
+    parser.add_argument('--nncf_config', type=str, help='path to NNCF config .json file to be used for compressed model'
+                                                        'fine-tuning')
+
     args = parser.parse_args()
 
     if args.doc_stride >= args.max_seq_length - args.max_query_length:
@@ -732,18 +768,66 @@ def main():
         do_lower_case=args.do_lower_case,
         cache_dir=args.cache_dir if args.cache_dir else None,
     )
-    model = AutoModelForQuestionAnswering.from_pretrained(
+
+    nncf_config = None
+    if args.nncf_config is not None:
+        nncf_config = NNCFConfig.from_json(args.nncf_config)
+        if nncf_config.get("log_dir") is None:
+            nncf_config["log_dir"] = args.output_dir
+        if not os.path.exists(args.output_dir) and args.local_rank in [-1, 0]:
+            os.makedirs(nncf_config["log_dir"])
+        if args.do_train:
+            train_dataset = load_and_cache_examples(args, tokenizer, evaluate=False, output_examples=False)
+            train_dataloader = get_train_dataloader(args, train_dataset)
+
+            class SquadInitializingDataloader(InitializingDataLoader):
+                def get_inputs(self, dataloader_output):
+                    kwargs = {'attention_mask': dataloader_output[1],
+                              'start_positions': dataloader_output[3],
+                              'end_positions': dataloader_output[4]}
+                    if args.model_type != 'distilbert':
+                        kwargs['token_type_ids'] = None if args.model_type == 'xlm' else dataloader_output[2]
+                    if args.model_type in ['xlnet', 'xlm']:
+                        kwargs.update({'cls_index': dataloader_output[5],
+                                       'p_mask': dataloader_output[6]})
+                    return (dataloader_output[0],), kwargs
+
+            initializing_data_loader = SquadInitializingDataloader(train_dataloader)
+            nncf_config.register_extra_structs([QuantizationRangeInitArgs(initializing_data_loader)])
+
+    retval = AutoModelForQuestionAnswering.from_pretrained(
         args.model_name_or_path,
         from_tf=bool(".ckpt" in args.model_name_or_path),
         config=config,
         cache_dir=args.cache_dir if args.cache_dir else None,
+        nncf_config=nncf_config,
+        nncf_eval=nncf_config is not None and args.do_eval and not args.do_train
     )
+
+    if nncf_config is None:
+        model = retval
+        compression_ctrl = None
+    else:
+        compression_ctrl, model = retval
+
 
     if args.local_rank == 0:
         # Make sure only the first process in distributed training will download model & vocab
         torch.distributed.barrier()
 
+    if args.to_onnx:
+        if nncf_config is not None:
+            compression_ctrl.export_model(args.to_onnx)
+        else:
+            model.to('cpu')
+            dummy_tensor = torch.ones([1, args.max_seq_length], dtype=torch.long)
+            onnx.export(model, (dummy_tensor, dummy_tensor, dummy_tensor), args.to_onnx)
+
     model.to(args.device)
+
+    if nncf_config is not None:
+        if not (args.local_rank == -1 or args.no_cuda):
+            compression_ctrl.distributed()
 
     logger.info("Training/evaluation parameters %s", args)
 
@@ -761,7 +845,7 @@ def main():
     # Training
     if args.do_train:
         train_dataset = load_and_cache_examples(args, tokenizer, evaluate=False, output_examples=False)
-        global_step, tr_loss = train(args, train_dataset, model, tokenizer)
+        global_step, tr_loss = train(args, train_dataset, model, tokenizer, compression_ctrl)
         logger.info(" global_step = %s, average loss = %s", global_step, tr_loss)
 
     # Save the trained model and the tokenizer
@@ -771,14 +855,22 @@ def main():
         # They can then be reloaded using `from_pretrained()`
         # Take care of distributed/parallel training
         model_to_save = model.module if hasattr(model, "module") else model
-        model_to_save.save_pretrained(args.output_dir)
+        model_to_save.save_pretrained(args.output_dir, saved_module_override=model_to_save)
         tokenizer.save_pretrained(args.output_dir)
 
         # Good practice: save your training arguments together with the trained model
         torch.save(args, os.path.join(args.output_dir, "training_args.bin"))
 
         # Load a trained model and vocabulary that you have fine-tuned
-        model = AutoModelForQuestionAnswering.from_pretrained(args.output_dir)  # , force_download=True)
+        retval = AutoModelForQuestionAnswering.from_pretrained(args.output_dir,
+                                                               nncf_config=nncf_config,
+                                                               nncf_eval=True if nncf_config is not None else False)
+
+        if nncf_config is None:
+            model = retval
+        else:
+            _, model = retval
+
         tokenizer = AutoTokenizer.from_pretrained(args.output_dir, do_lower_case=args.do_lower_case)
         model.to(args.device)
 
@@ -803,7 +895,15 @@ def main():
         for checkpoint in checkpoints:
             # Reload the model
             global_step = checkpoint.split("-")[-1] if len(checkpoints) > 1 else ""
-            model = AutoModelForQuestionAnswering.from_pretrained(checkpoint)  # , force_download=True)
+            retval = AutoModelForQuestionAnswering.from_pretrained(checkpoint,
+                                                                   nncf_config=nncf_config,
+                                                                   nncf_eval=True if nncf_config is not None else False)  # , force_download=True)
+
+            if nncf_config is None:
+                model = retval
+            else:
+                _, model = retval
+
             model.to(args.device)
 
             # Evaluate

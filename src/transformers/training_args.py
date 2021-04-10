@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Tuple
 
 from .file_utils import cached_property, is_torch_available, is_torch_tpu_available, torch_required
+from nncf import NNCFConfig
+
 
 
 if is_torch_available():
@@ -209,6 +211,12 @@ class TrainingArguments:
         metadata={"help": "Deprecated, the use of `--debug` is preferred. TPU: Whether to print debug metrics"},
     )
     debug: bool = field(default=False, metadata={"help": "Whether to print debug metrics on TPU"})
+
+    nncf_config: str = field(default=None,
+                             metadata={"help": "NNCF configuration .json file for compression-enabled training"})
+
+    to_onnx: str = field(default=None,
+                             metadata={"help": "Name of the ONNX model file to export the model to."})
 
     dataloader_drop_last: bool = field(
         default=False, metadata={"help": "Drop the last incomplete batch if it is not divisible by the batch size."}
