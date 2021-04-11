@@ -30,6 +30,7 @@ from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm, trange
 from torch import onnx
+from nncf.initialization import register_default_init_args
 
 from transformers import (
     MODEL_FOR_QUESTION_ANSWERING_MAPPING,
@@ -776,24 +777,48 @@ def main():
             nncf_config["log_dir"] = args.output_dir
         if not os.path.exists(args.output_dir) and args.local_rank in [-1, 0]:
             os.makedirs(nncf_config["log_dir"])
-        if args.do_train:
-            train_dataset = load_and_cache_examples(args, tokenizer, evaluate=False, output_examples=False)
-            train_dataloader = get_train_dataloader(args, train_dataset)
+        # if args.do_train:
+        train_dataset = load_and_cache_examples(args, tokenizer, evaluate=False, output_examples=False)
+        train_dataloader = get_train_dataloader(args, train_dataset)
 
-            class SquadInitializingDataloader(InitializingDataLoader):
-                def get_inputs(self, dataloader_output):
-                    kwargs = {'attention_mask': dataloader_output[1],
-                              'start_positions': dataloader_output[3],
-                              'end_positions': dataloader_output[4]}
-                    if args.model_type != 'distilbert':
-                        kwargs['token_type_ids'] = None if args.model_type == 'xlm' else dataloader_output[2]
-                    if args.model_type in ['xlnet', 'xlm']:
-                        kwargs.update({'cls_index': dataloader_output[5],
-                                       'p_mask': dataloader_output[6]})
-                    return (dataloader_output[0],), kwargs
+        class SquadInitializingDataloader(InitializingDataLoader):
+            def get_inputs(self, dataloader_output):
+                kwargs = {'attention_mask': dataloader_output[1],
+                            'start_positions': dataloader_output[3],
+                            'end_positions': dataloader_output[4]}
+                if args.model_type != 'distilbert':
+                    kwargs['token_type_ids'] = None if args.model_type == 'xlm' else dataloader_output[2]
+                if args.model_type in ['xlnet', 'xlm']:
+                    kwargs.update({'cls_index': dataloader_output[5],
+                                    'p_mask': dataloader_output[6]})
+                return (dataloader_output[0],), kwargs
 
-            initializing_data_loader = SquadInitializingDataloader(train_dataloader)
-            nncf_config.register_extra_structs([QuantizationRangeInitArgs(initializing_data_loader)])
+        initializing_data_loader = SquadInitializingDataloader(train_dataloader)
+
+        if not os.path.exists(args.output_dir) and args.local_rank in [-1, 0]:
+            os.makedirs(args.output_dir, exist_ok=True)
+
+        args.eval_batch_size = args.per_gpu_eval_batch_size * max(1, args.n_gpu)
+
+        def bert_squad_criterion_fn(model_outputs, criterion):
+            output = model_outputs[0]
+            return output.cuda()
+
+        criterion = torch.nn.CrossEntropyLoss().cuda()
+        train_criterion_fn = bert_squad_criterion_fn
+
+        dataset, examples, features = load_and_cache_examples(args, tokenizer, evaluate=True, output_examples=True)
+        # Note that DistributedSampler samples randomly
+        eval_sampler = SequentialSampler(dataset)
+        eval_dataloader = DataLoader(dataset, sampler=eval_sampler, batch_size=args.eval_batch_size)
+      
+        def autoq_eval_fn(model, x):
+            result = evaluate(args, model.cuda(), tokenizer)
+            return result['f1']
+
+        nncf_config = register_default_init_args(
+            nncf_config, initializing_data_loader, criterion, train_criterion_fn,
+            autoq_eval_fn, eval_dataloader, args.device)
 
     retval = AutoModelForQuestionAnswering.from_pretrained(
         args.model_name_or_path,
@@ -842,37 +867,38 @@ def main():
         except ImportError:
             raise ImportError("Please install apex from https://www.github.com/nvidia/apex to use fp16 training.")
 
-    # Training
-    if args.do_train:
-        train_dataset = load_and_cache_examples(args, tokenizer, evaluate=False, output_examples=False)
-        global_step, tr_loss = train(args, train_dataset, model, tokenizer, compression_ctrl)
-        logger.info(" global_step = %s, average loss = %s", global_step, tr_loss)
+    if False: # only way to go to evaluation directly
+        # Training
+        if args.do_train:
+            train_dataset = load_and_cache_examples(args, tokenizer, evaluate=False, output_examples=False)
+            global_step, tr_loss = train(args, train_dataset, model, tokenizer, initializing_data_loader, eval_dataloader, autoq_eval_fn, compression_ctrl)
+            logger.info(" global_step = %s, average loss = %s", global_step, tr_loss)
 
-    # Save the trained model and the tokenizer
-    if args.do_train and (args.local_rank == -1 or torch.distributed.get_rank() == 0):
-        logger.info("Saving model checkpoint to %s", args.output_dir)
-        # Save a trained model, configuration and tokenizer using `save_pretrained()`.
-        # They can then be reloaded using `from_pretrained()`
-        # Take care of distributed/parallel training
-        model_to_save = model.module if hasattr(model, "module") else model
-        model_to_save.save_pretrained(args.output_dir, saved_module_override=model_to_save)
-        tokenizer.save_pretrained(args.output_dir)
+        # Save the trained model and the tokenizer
+        if args.do_train and (args.local_rank == -1 or torch.distributed.get_rank() == 0):
+            logger.info("Saving model checkpoint to %s", args.output_dir)
+            # Save a trained model, configuration and tokenizer using `save_pretrained()`.
+            # They can then be reloaded using `from_pretrained()`
+            # Take care of distributed/parallel training
+            model_to_save = model.module if hasattr(model, "module") else model
+            model_to_save.save_pretrained(args.output_dir, saved_module_override=model_to_save)
+            tokenizer.save_pretrained(args.output_dir)
 
-        # Good practice: save your training arguments together with the trained model
-        torch.save(args, os.path.join(args.output_dir, "training_args.bin"))
+            # Good practice: save your training arguments together with the trained model
+            torch.save(args, os.path.join(args.output_dir, "training_args.bin"))
 
-        # Load a trained model and vocabulary that you have fine-tuned
-        retval = AutoModelForQuestionAnswering.from_pretrained(args.output_dir,
-                                                               nncf_config=nncf_config,
-                                                               nncf_eval=True if nncf_config is not None else False)
+            # Load a trained model and vocabulary that you have fine-tuned
+            retval = AutoModelForQuestionAnswering.from_pretrained(args.output_dir,
+                                                                nncf_config=nncf_config,
+                                                                nncf_eval=True if nncf_config is not None else False)
 
-        if nncf_config is None:
-            model = retval
-        else:
-            _, model = retval
+            if nncf_config is None:
+                model = retval
+            else:
+                _, model = retval
 
-        tokenizer = AutoTokenizer.from_pretrained(args.output_dir, do_lower_case=args.do_lower_case)
-        model.to(args.device)
+            tokenizer = AutoTokenizer.from_pretrained(args.output_dir, do_lower_case=args.do_lower_case)
+            model.to(args.device)
 
     # Evaluation - we can ask to evaluate all the checkpoints (sub-directories) in a directory
     results = {}
