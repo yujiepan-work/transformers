@@ -1,0 +1,137 @@
+{
+    "input_info": [
+        {
+            "sample_size": [1, 384],
+            "type": "long"
+        },
+        {
+            "sample_size": [1, 384],
+            "type": "long"
+        },
+        {
+            "sample_size": [1, 384],
+            "type": "long"
+        }
+    ],
+    "target_device": "VPU",
+    "compression": {
+        "algorithm": "quantization",
+        "initializer": {
+            "batchnorm_adaptation": {
+                "num_bn_adaptation_samples": 3500
+            },
+            "range":
+            {
+                "type": "mean_min_max",
+                "num_init_samples": 32
+            },
+            "precision": {
+                "type": "autoq",
+                "bits": [2, 4, 8],
+                "iter_number": 300,
+                "compression_ratio": 0.18,
+                "eval_subset_ratio": 0.50,
+                "dump_init_precision_data": true
+            }
+        },
+        // "ignored_scopes": ["{re}BertSelfAttention\\[self\\]/__add___0",
+        //     "{re}BertIntermediate\\[intermediate\\]/__mul___0",
+        //     "{re}BertIntermediate\\[intermediate\\]/NNCFLinear\\[dense\\]/linear_0"],
+        // "activations":
+        // {
+        //     "mode": "symmetric",
+        //     "ignored_scopes": ["{re}BertSelfAttention\\[self\\]/NNCFLinear\\[(key)|(query)|(value)\\].*",
+        //     "{re}BertForQuestionAnswering/BertModel\\[bert\\]/BertEmbeddings\\[embeddings\\]/__add___0",
+        //     "{re}BertForQuestionAnswering/BertModel\\[bert\\]/BertEmbeddings\\[embeddings\\]/__add___1",
+        //     "{re}BertOutput\\[output\\]/__add___0"]
+        // },
+        "ignored_scopes": 
+        [
+            "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[0]/BertOutput[output]/NNCFLinear[dense]",
+            "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[1]/BertOutput[output]/NNCFLinear[dense]",
+            "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[2]/BertOutput[output]/NNCFLinear[dense]",
+            "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[3]/BertOutput[output]/NNCFLinear[dense]",
+            "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[4]/BertOutput[output]/NNCFLinear[dense]",
+            "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[5]/BertOutput[output]/NNCFLinear[dense]",
+            "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[6]/BertOutput[output]/NNCFLinear[dense]",
+            "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[7]/BertOutput[output]/NNCFLinear[dense]",
+            "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[8]/BertOutput[output]/NNCFLinear[dense]",
+            "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[9]/BertOutput[output]/NNCFLinear[dense]",
+            "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[10]/BertOutput[output]/NNCFLinear[dense]",
+            "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[11]/BertOutput[output]/NNCFLinear[dense]",
+            "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[12]/BertOutput[output]/NNCFLinear[dense]",
+            "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[13]/BertOutput[output]/NNCFLinear[dense]",
+            "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[14]/BertOutput[output]/NNCFLinear[dense]",
+            "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[15]/BertOutput[output]/NNCFLinear[dense]",
+            "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[16]/BertOutput[output]/NNCFLinear[dense]",
+            "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[17]/BertOutput[output]/NNCFLinear[dense]",
+            "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[18]/BertOutput[output]/NNCFLinear[dense]",
+            "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[19]/BertOutput[output]/NNCFLinear[dense]",
+            "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[20]/BertOutput[output]/NNCFLinear[dense]",
+            "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[21]/BertOutput[output]/NNCFLinear[dense]",
+            "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[22]/BertOutput[output]/NNCFLinear[dense]",
+            "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[23]/BertOutput[output]/NNCFLinear[dense]",
+                "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[0]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+                "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[1]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+                "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[2]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+                "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[3]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+                "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[4]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+                "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[5]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+                "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[6]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+                "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[7]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+                "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[8]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+                "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[9]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+                "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[10]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+                "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[11]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+                "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[12]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+                "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[13]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+                "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[14]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+                "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[15]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+                "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[16]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+                "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[17]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+                "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[18]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+                "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[19]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+                "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[20]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+                "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[21]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+                "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[22]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+                "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[23]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0"
+        ],
+        // "activations": {
+        //     "ignored_scopes": [
+        //         "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[0]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+        //         "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[1]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+        //         "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[2]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+        //         "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[3]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+        //         "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[4]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+        //         "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[5]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+        //         "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[6]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+        //         "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[7]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+        //         "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[8]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+        //         "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[9]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+        //         "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[10]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+        //         "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[11]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+        //         "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[12]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+        //         "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[13]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+        //         "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[14]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+        //         "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[15]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+        //         "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[16]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+        //         "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[17]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+        //         "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[18]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+        //         "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[19]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+        //         "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[20]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+        //         "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[21]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+        //         "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[22]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0",
+        //         "BertForQuestionAnswering/BertModel[bert]/BertEncoder[encoder]/ModuleList[layer]/BertLayer[23]/BertAttention[attention]/BertSelfAttention[self]/Softmax/softmax_0"
+        //     ]
+        // }
+        // "params": {
+        //     "base_lr": 2e-4,
+        //     "base_wd": 1e-5,
+        //     "batch_multiplier": 1,
+        //     "activations_quant_start_epoch": 0,
+        //     "weights_quant_start_epoch": 0,
+        //     "lr_poly_drop_start_epoch": 0,
+        //     "lr_poly_drop_duration_epochs": 10,
+        // },
+    }
+}
