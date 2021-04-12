@@ -83,7 +83,7 @@ def get_train_dataloader(args, train_dataset):
     return train_dataloader
 
 
-def train(args, train_dataset, model, tokenizer, compression_ctrl=None):
+def train(args, train_dataset, model, tokenizer, dataset, examples, features, eval_sampler, eval_loader, compression_ctrl=None):
     """ Train the model """
     if args.local_rank in [-1, 0]:
         tb_writer = SummaryWriter()
@@ -251,7 +251,7 @@ def train(args, train_dataset, model, tokenizer, compression_ctrl=None):
                 if args.local_rank in [-1, 0] and args.logging_steps > 0 and global_step % args.logging_steps == 0:
                     # Only evaluate when single GPU otherwise metrics may not average well
                     if args.local_rank == -1 and args.evaluate_during_training:
-                        results = evaluate(args, model, tokenizer)
+                        results = evaluate(args, model, tokenizer, dataset, examples, features, eval_sampler, eval_loader)
                         for key, value in results.items():
                             tb_writer.add_scalar("eval_{}".format(key), value, global_step)
                     tb_writer.add_scalar("lr", scheduler.get_lr()[0], global_step)
@@ -297,17 +297,17 @@ def train(args, train_dataset, model, tokenizer, compression_ctrl=None):
     return global_step, tr_loss / global_step
 
 
-def evaluate(args, model, tokenizer, prefix=""):
-    dataset, examples, features = load_and_cache_examples(args, tokenizer, evaluate=True, output_examples=True)
+def evaluate(args, model, tokenizer, dataset, examples, features, eval_sampler, eval_dataloader, prefix=""):
+    # dataset, examples, features = load_and_cache_examples(args, tokenizer, evaluate=True, output_examples=True)
 
-    if not os.path.exists(args.output_dir) and args.local_rank in [-1, 0]:
-        os.makedirs(args.output_dir)
+    # if not os.path.exists(args.output_dir) and args.local_rank in [-1, 0]:
+    #     os.makedirs(args.output_dir)
 
-    args.eval_batch_size = args.per_gpu_eval_batch_size * max(1, args.n_gpu)
+    # args.eval_batch_size = args.per_gpu_eval_batch_size * max(1, args.n_gpu)
 
-    # Note that DistributedSampler samples randomly
-    eval_sampler = SequentialSampler(dataset)
-    eval_dataloader = DataLoader(dataset, sampler=eval_sampler, batch_size=args.eval_batch_size)
+    # # Note that DistributedSampler samples randomly
+    # eval_sampler = SequentialSampler(dataset)
+    # eval_dataloader = DataLoader(dataset, sampler=eval_sampler, batch_size=args.eval_batch_size)
 
     # multi-gpu evaluate
     if args.n_gpu > 1 and not isinstance(model, torch.nn.DataParallel):
@@ -777,6 +777,7 @@ def main():
             nncf_config["log_dir"] = args.output_dir
         if not os.path.exists(args.output_dir) and args.local_rank in [-1, 0]:
             os.makedirs(nncf_config["log_dir"])
+
         # if args.do_train:
         train_dataset = load_and_cache_examples(args, tokenizer, evaluate=False, output_examples=False)
         train_dataloader = get_train_dataloader(args, train_dataset)
@@ -812,8 +813,8 @@ def main():
         eval_sampler = SequentialSampler(dataset)
         eval_dataloader = DataLoader(dataset, sampler=eval_sampler, batch_size=args.eval_batch_size)
       
-        def autoq_eval_fn(model, x):
-            result = evaluate(args, model.cuda(), tokenizer)
+        def autoq_eval_fn(model, eval_loader):
+            result = evaluate(args, model.cuda(), tokenizer, dataset, examples, features, eval_sampler, eval_loader)
             return result['f1']
 
         nncf_config = register_default_init_args(
@@ -871,7 +872,8 @@ def main():
         # Training
         if args.do_train:
             train_dataset = load_and_cache_examples(args, tokenizer, evaluate=False, output_examples=False)
-            global_step, tr_loss = train(args, train_dataset, model, tokenizer, initializing_data_loader, eval_dataloader, autoq_eval_fn, compression_ctrl)
+            global_step, tr_loss = train(args, train_dataset, model, tokenizer, dataset, examples, features, eval_sampler, eval_dataloader, compression_ctrl)
+
             logger.info(" global_step = %s, average loss = %s", global_step, tr_loss)
 
         # Save the trained model and the tokenizer
@@ -933,7 +935,7 @@ def main():
             model.to(args.device)
 
             # Evaluate
-            result = evaluate(args, model, tokenizer, prefix=global_step)
+            result = evaluate(args, model, tokenizer, dataset, examples, features, eval_sampler, eval_dataloader, prefix=global_step)
 
             result = dict((k + ("_{}".format(global_step) if global_step else ""), v) for k, v in result.items())
             results.update(result)
