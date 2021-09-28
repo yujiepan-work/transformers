@@ -611,6 +611,7 @@ def main():
         trainer.log_metrics("eval_precrop", precrop_metrics)
         trainer.save_metrics("eval_precrop", precrop_metrics)
 
+
         # ------------------------------------------------
         logger.info("*** Evaluate cropped model ***")
         trainer.model = optimize_model(trainer.model, "dense")
@@ -626,11 +627,11 @@ def main():
         df = pd.DataFrame.from_dict([precrop_metrics,cropped_metrics]).T
         df.columns = ['pre_crop','post_crop']
 
-        logging.info(df.__repr__())
+        print(df.__repr__())
         speedup = (df.pre_crop/df.post_crop)['elapsed_time_eval_loop']
-        logging.info("Block Pruning speedup by {:.2f}".format(speedup))
+        print("***  Block Pruning speedup by {:.2f} ***".format(speedup))
         #(df.post_crop-df.pre_crop)/df.pre_crop)[[0,1]].__repr__()
-        print("hello")
+
     # Prediction
     if training_args.do_predict:
         logger.info("*** Predict ***")
