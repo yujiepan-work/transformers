@@ -18,7 +18,7 @@ A subclass of `Trainer` specific to Question-Answering tasks
 
 from transformers import Trainer, is_torch_tpu_available
 from transformers.trainer_utils import PredictionOutput
-
+import timeit
 
 if is_torch_tpu_available():
     import torch_xla.core.xla_model as xm
@@ -41,6 +41,7 @@ class QuestionAnsweringTrainer(Trainer):
         self.compute_metrics = None
         eval_loop = self.prediction_loop if self.args.use_legacy_prediction_loop else self.evaluation_loop
         try:
+            _start_time = timeit.default_timer()
             output = eval_loop(
                 eval_dataloader,
                 description="Evaluation",
@@ -49,6 +50,7 @@ class QuestionAnsweringTrainer(Trainer):
                 prediction_loss_only=True if compute_metrics is None else None,
                 ignore_keys=ignore_keys,
             )
+            evalTime = timeit.default_timer() - _start_time
         finally:
             self.compute_metrics = compute_metrics
 
@@ -64,6 +66,9 @@ class QuestionAnsweringTrainer(Trainer):
             self.log(metrics)
         else:
             metrics = {}
+        
+        if evalTime is not None and metrics is not None:
+            metrics['elapsed_time_eval_loop'] = evalTime
 
         if self.args.tpu_metrics_debug or self.args.debug:
             # tpu-comment: Logging debug metrics for PyTorch/XLA (compile, execute times, ops, etc.)
@@ -80,6 +85,7 @@ class QuestionAnsweringTrainer(Trainer):
         self.compute_metrics = None
         eval_loop = self.prediction_loop if self.args.use_legacy_prediction_loop else self.evaluation_loop
         try:
+            start_time = timeit.default_timer()
             output = eval_loop(
                 predict_dataloader,
                 description="Prediction",
@@ -88,6 +94,8 @@ class QuestionAnsweringTrainer(Trainer):
                 prediction_loss_only=True if compute_metrics is None else None,
                 ignore_keys=ignore_keys,
             )
+            evalTime = timeit.default_timer() - start_time
+            print("elapse: {}s".format(evalTime))
         finally:
             self.compute_metrics = compute_metrics
 
