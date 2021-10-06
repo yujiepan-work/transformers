@@ -499,6 +499,31 @@ def main():
     # Evaluation
     if training_args.do_eval:
         logger.info("*** Evaluate ***")
+        if training_args.optimize_model_before_eval is True:
+            from nn_pruning.inference_model_patcher import optimize_model
+            trainer.model = optimize_model(trainer.model, "dense")
+        
+        import numpy as np
+        import pandas as pd
+        from collections import OrderedDict
+
+        dlist=[]
+        for n, m in trainer.model.named_modules():
+            if m.__class__.__name__ == "Linear" and 'classifier' not in n:
+                l = OrderedDict()
+                l['linear_id'] = n
+                l['shape'] = list(m.weight.shape)
+                l['param_count'] = np.prod(l['shape'])
+                dlist.append(l)
+        df = pd.DataFrame.from_dict(dlist)
+        linear_layer_total_size_in_mb = df.param_count.sum()/1000/1000
+
+        if training_args.output_dir is not None:
+            prefix = 'XP_' if training_args.optimize_model_before_eval else ''
+            csvpath = os.path.join(training_args.output_dir, 
+                                   "{}linear_layer_stats_total_{:.0f}M.csv".format(
+                                       prefix, linear_layer_total_size_in_mb))
+            df.to_csv(csvpath, index=True)
 
         # Loop to handle MNLI double evaluation (matched, mis-matched)
         tasks = [data_args.task_name]
@@ -515,8 +540,10 @@ def main():
             )
             metrics["eval_samples"] = min(max_eval_samples, len(eval_dataset))
 
-            trainer.log_metrics("eval", metrics)
-            trainer.save_metrics("eval", metrics)
+            eval_label = 'eval_XP' if training_args.optimize_model_before_eval else 'eval'
+            eval_label = '_'.join([eval_label, task])
+            trainer.log_metrics(eval_label, metrics)
+            trainer.save_metrics(eval_label, metrics)
 
     if training_args.do_predict:
         logger.info("*** Predict ***")
