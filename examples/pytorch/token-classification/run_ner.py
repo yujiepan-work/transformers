@@ -22,29 +22,38 @@ Fine-tuning the library models for token classification.
 import logging
 import os
 import sys
-from dataclasses import dataclass, field
+from copy import deepcopy
+from dataclasses import dataclass
+from dataclasses import field
+from typing import List
 from typing import Optional
 
 import datasets
 import numpy as np
-from datasets import ClassLabel, load_dataset, load_metric
-
+import torch
 import transformers
-from transformers import (
-    AutoConfig,
-    AutoModelForTokenClassification,
-    AutoTokenizer,
-    DataCollatorForTokenClassification,
-    HfArgumentParser,
-    PreTrainedTokenizerFast,
-    Trainer,
-    TrainingArguments,
-    set_seed,
-)
+from datasets import ClassLabel
+from datasets import load_dataset
+from datasets import load_metric
+from nncf import NNCFConfig
+from nncf.config.structures import BNAdaptationInitArgs
+from nncf.config.structures import QuantizationRangeInitArgs
+from nncf.torch.initialization import PTInitializingDataLoader
+from packaging import version
+from torch import onnx
+from transformers import AutoConfig
+from transformers import AutoModelForTokenClassification
+from transformers import AutoTokenizer
+from transformers import DataCollatorForTokenClassification
+from transformers import HfArgumentParser
+from transformers import PreTrainedTokenizerFast
+from transformers import Trainer
+from transformers import TrainingArguments
+from transformers import set_seed
+from transformers.trainer import get_train_dataloader_for_init
 from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version
 from transformers.utils.versions import require_version
-
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
 check_min_version("4.9.0")
@@ -175,6 +184,16 @@ class DataTrainingArguments:
                 extension = self.validation_file.split(".")[-1]
                 assert extension in ["csv", "json"], "`validation_file` should be a csv or a json file."
         self.task_name = self.task_name.lower()
+
+
+def filter_columns(dataset, keep_columns: List[str], remove_columns: List[str]):
+    if version.parse(datasets.__version__) < version.parse("1.4.0"):
+        dataset.set_format(
+            type=dataset.format["type"], columns=keep_columns, format_kwargs=dataset.format["format_kwargs"]
+        )
+        return dataset
+    else:
+        return dataset.remove_columns(remove_columns)
 
 
 def main():
@@ -331,14 +350,7 @@ def main():
             use_auth_token=True if model_args.use_auth_token else None,
         )
 
-    model = AutoModelForTokenClassification.from_pretrained(
-        model_args.model_name_or_path,
-        from_tf=bool(".ckpt" in model_args.model_name_or_path),
-        config=config,
-        cache_dir=model_args.cache_dir,
-        revision=model_args.model_revision,
-        use_auth_token=True if model_args.use_auth_token else None,
-    )
+
 
     # Tokenizer check: this script requires a fast tokenizer.
     if not isinstance(tokenizer, PreTrainedTokenizerFast):
@@ -432,6 +444,65 @@ def main():
     # Data collator
     data_collator = DataCollatorForTokenClassification(tokenizer, pad_to_multiple_of=8 if training_args.fp16 else None)
 
+    nncf_config = None
+    if training_args.nncf_config is not None:
+        nncf_config = NNCFConfig.from_json(training_args.nncf_config)
+        if nncf_config.get("log_dir") is None:
+            nncf_config["log_dir"] = training_args.output_dir
+        if not os.path.exists(training_args.output_dir) and training_args.local_rank in [-1, 0]:
+            os.makedirs(nncf_config["log_dir"])
+        if training_args.do_train:
+            train_dataset_for_init = deepcopy(train_dataset)
+
+            train_dataset_for_init = filter_columns(train_dataset_for_init,
+                                                    keep_columns=['labels', 'input_ids', 'attention_mask',
+                                                                  'token_type_ids'],
+                                                    remove_columns=['ner_tags', 'pos_tags', 'tokens', 'id',
+                                                                    'chunk_tags'])
+            train_dataloader = get_train_dataloader_for_init(training_args, train_dataset_for_init, data_collator)
+
+            class ConllInitializingDataloader(PTInitializingDataLoader):
+                def get_inputs(self, dataloader_output):
+                    return (), {
+                        "input_ids": dataloader_output["input_ids"],
+                        "attention_mask": dataloader_output["attention_mask"],
+                        "token_type_ids": dataloader_output["token_type_ids"],
+                    }
+
+            nncf_config.register_extra_structs([
+                QuantizationRangeInitArgs(ConllInitializingDataloader(train_dataloader)),
+                BNAdaptationInitArgs(ConllInitializingDataloader(train_dataloader)),
+            ])
+
+    retval = AutoModelForTokenClassification.from_pretrained(
+        model_args.model_name_or_path,
+        from_tf=bool(".ckpt" in model_args.model_name_or_path),
+        config=config,
+        cache_dir=model_args.cache_dir,
+        revision=model_args.model_revision,
+        use_auth_token=True if model_args.use_auth_token else None,
+        nncf_config=nncf_config,
+        nncf_eval=nncf_config is not None and training_args.do_eval and not training_args.do_train
+    )
+
+    if nncf_config is None:
+        model = retval
+        compression_ctrl = None
+    else:
+        compression_ctrl, model = retval
+
+
+    if training_args.to_onnx:
+    # Expecting the following forward signature:
+    # (input_ids, attention_mask, token_type_ids, ...)
+        if nncf_config is not None:
+            compression_ctrl.export_model(training_args.to_onnx)
+        else:
+            model.to('cpu')
+            dummy_tensor = torch.ones([1, 128], dtype=torch.long)
+            onnx.export(model, (dummy_tensor, dummy_tensor, dummy_tensor), training_args.to_onnx,
+                        opset_version=10)
+
     # Metrics
     metric = load_metric("seqeval")
 
@@ -477,6 +548,7 @@ def main():
         tokenizer=tokenizer,
         data_collator=data_collator,
         compute_metrics=compute_metrics,
+        compression_ctrl=compression_ctrl
     )
 
     # Training
