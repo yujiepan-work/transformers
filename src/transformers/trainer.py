@@ -810,16 +810,30 @@ class Trainer:
         We provide a reasonable default that works well. If you want to use something else, you can pass a tuple in the
         Trainer's init through :obj:`optimizers`, or subclass and override this method in a subclass.
         """
+        # TODO: revision needed. initial nncf movement-sparsity has hardcoded importance learning rate scheduling 
         if self.optimizer is None:
+            score_params = []
+            for n, p in self.model.named_parameters():
+                if not p.requires_grad:
+                    continue
+                if "importance" in n:
+                    score_params.append(p)
+
             decay_parameters = get_parameter_names(self.model, [nn.LayerNorm])
             decay_parameters = [name for name in decay_parameters if "bias" not in name]
+            decay_parameters = [name for name in decay_parameters if "importance" not in name]
             optimizer_grouped_parameters = [
+                {
+                    "params": score_params,
+                    "weight_decay": 0.0,
+                    "lr": 0.01
+                },
                 {
                     "params": [p for n, p in self.model.named_parameters() if n in decay_parameters],
                     "weight_decay": self.args.weight_decay,
                 },
                 {
-                    "params": [p for n, p in self.model.named_parameters() if n not in decay_parameters],
+                    "params": [p for n, p in self.model.named_parameters() if n not in decay_parameters and 'importance' not in n],
                     "weight_decay": 0.0,
                 },
             ]
@@ -1468,12 +1482,29 @@ class Trainer:
             logs["loss"] = round(tr_loss_scalar / (self.state.global_step - self._globalstep_last_logged), 4)
             logs["learning_rate"] = self._get_learning_rate()
 
+            # TODO: revision needed.
             if self.compression_ctrl is not None:
-                logs["compression_loss"] = self.compression_ctrl.loss().item()
+                logs["raw_compression_loss"] = self.compression_ctrl.loss().item()
+                logs["regu_compression_loss"] = self.compression_ctrl.scheduler._current_regu_lambda * logs["raw_compression_loss"]
                 compression_stats = self.compression_ctrl.statistics()
                 for key, value in prepare_for_tensorboard(compression_stats).items():
-                    logs["compression/statistics/{0}".format(key)] = value
-                print(compression_stats.to_str())
+                    logs["nncf/{0}".format(key)] = value
+                    # logs["compression/statistics/{0}".format(key)] = value
+                # print(compression_stats.to_str())
+
+            if False:
+                if hasattr(self, "tb_callback") is False:
+                    for cb in self.callback_handler.callbacks:
+                        if cb.__class__.__name__ == "TensorBoardCallback":
+                            self.tb_callback = cb
+                
+                if self.tb_callback is not None and self.tb_callback.tb_writer is not None:
+                    with torch.no_grad():
+                        for n, p in model.named_parameters():
+                            if p.__class__.__name__ == 'CompressionParameter':
+                                label = n[38:].replace("pre_ops.0.op._importance","importance")
+                                self.tb_callback.tb_writer.add_histogram(label, p, global_step=self.state.global_step)
+                            
 
             self._total_loss_scalar += tr_loss_scalar
             self._globalstep_last_logged = self.state.global_step
@@ -1830,7 +1861,8 @@ class Trainer:
 
         if self.compression_ctrl is not None:
             compression_loss = self.compression_ctrl.loss()
-            loss += compression_loss
+            # TODO: Revision Needed
+            loss += compression_loss * self.compression_ctrl.scheduler._current_regu_lambda
 
         if self.use_amp:
             self.scaler.scale(loss).backward()
