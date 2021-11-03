@@ -56,6 +56,7 @@ from nncf.config.structures import BNAdaptationInitArgs
 from nncf.config.structures import QuantizationRangeInitArgs
 from nncf.common.utils.tensorboard import prepare_for_tensorboard
 
+from distill_trainer import QADistillTrainer
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
 check_min_version("4.9.0")
 
@@ -574,6 +575,14 @@ def main():
                 BNAdaptationInitArgs(SquadInitializingDataloader(train_dataloader)),
             ])
 
+    teacher_model = None
+    if training_args.teacher is not None:
+        teacher_model = AutoModelForQuestionAnswering.from_pretrained(
+            training_args.teacher,
+            from_tf=bool(".ckpt" in training_args.teacher),
+            cache_dir=model_args.cache_dir,
+        )
+
     retval = AutoModelForQuestionAnswering.from_pretrained(
         model_args.model_name_or_path,
         from_tf=bool(".ckpt" in model_args.model_name_or_path),
@@ -601,19 +610,37 @@ def main():
             dummy_tensor = torch.ones([1, 384], dtype=torch.long)
             onnx.export(model, (dummy_tensor, dummy_tensor, dummy_tensor), training_args.to_onnx)
 
-    # Initialize our Trainer
-    trainer = QuestionAnsweringTrainer(
-        model=model,
-        args=training_args,
-        train_dataset=train_dataset if training_args.do_train else None,
-        eval_dataset=eval_dataset if training_args.do_eval else None,
-        eval_examples=eval_examples if training_args.do_eval else None,
-        tokenizer=tokenizer,
-        data_collator=data_collator,
-        post_process_function=post_processing_function,
-        compute_metrics=compute_metrics,
-        compression_ctrl=compression_ctrl
-    )
+    if teacher_model is not None:
+        # Initialize our Trainer
+        trainer = QADistillTrainer(
+            teacher=teacher_model,
+            hardness=training_args.teacher_ratio,
+            temperature=training_args.distill_temp,
+            model=model,
+            args=training_args,
+            train_dataset=train_dataset if training_args.do_train else None,
+            eval_dataset=eval_dataset if training_args.do_eval else None,
+            eval_examples=eval_examples if training_args.do_eval else None,
+            tokenizer=tokenizer,
+            data_collator=data_collator,
+            post_process_function=post_processing_function,
+            compute_metrics=compute_metrics,
+            compression_ctrl=compression_ctrl
+        )
+    else:
+        # Initialize our Trainer
+        trainer = QuestionAnsweringTrainer(
+            model=model,
+            args=training_args,
+            train_dataset=train_dataset if training_args.do_train else None,
+            eval_dataset=eval_dataset if training_args.do_eval else None,
+            eval_examples=eval_examples if training_args.do_eval else None,
+            tokenizer=tokenizer,
+            data_collator=data_collator,
+            post_process_function=post_processing_function,
+            compute_metrics=compute_metrics,
+            compression_ctrl=compression_ctrl
+        )
 
     # Training
     if training_args.do_train:
