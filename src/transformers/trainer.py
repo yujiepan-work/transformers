@@ -1864,6 +1864,12 @@ class Trainer:
             # TODO: Revision Needed
             loss += compression_loss * self.compression_ctrl.scheduler._current_regu_lambda
 
+        # TODO: to remove
+        # for n, m in model.named_modules():
+        #     if m.__class__.__name__ == "MovementSparsifyingWeight":
+        #         if m._importance.requires_grad is False:
+        #             print(n)
+
         if self.use_amp:
             self.scaler.scale(loss).backward()
         elif self.use_apex:
