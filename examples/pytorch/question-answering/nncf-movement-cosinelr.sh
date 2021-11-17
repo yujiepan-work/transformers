@@ -5,8 +5,8 @@ source $HOME/miniconda3/etc/profile.d/conda.sh
 conda activate jpq-nlp
 
 export CUDA_VISIBLE_DEVICES=0
-NEPOCH=10
-OUTDIR=/data1/vchua/runs-jpq-nlp/bert-base-mvmt-${NEPOCH}eph-PruneByBlock-run11
+NEPOCH=9
+OUTDIR=/data1/vchua/runs-coslr-jpq-nlp/bert-base-mvmt-${NEPOCH}eph-PruneByBlock-run1
 mkdir -p $OUTDIR
 
 cd /data1/vchua/jpq-nlp/transformers/examples/pytorch/question-answering
@@ -18,6 +18,8 @@ python run_qa.py \
     --evaluation_strategy steps \
     --eval_steps 250 \
     --learning_rate 3e-5 \
+    --lr_scheduler_type cosine_with_restarts \
+    --warmup_ratio 0.05 \
     --num_train_epochs $NEPOCH \
     --per_device_eval_batch_size 128 \
     --per_device_train_batch_size 16 \

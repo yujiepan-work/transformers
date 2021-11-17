@@ -135,7 +135,7 @@ def get_cosine_schedule_with_warmup(
 
 
 def get_cosine_with_hard_restarts_schedule_with_warmup(
-    optimizer: Optimizer, num_warmup_steps: int, num_training_steps: int, num_cycles: int = 1, last_epoch: int = -1
+    optimizer: Optimizer, num_warmup_steps: int, num_training_steps: int, num_cycles: int = 3, last_epoch: int = -1
 ):
     """
     Create a schedule with a learning rate that decreases following the values of the cosine function between the

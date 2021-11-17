@@ -21,9 +21,9 @@
             "init_importance_threshold": 0.0,
             "final_importance_threshold": 0.1,
             "warmup_start_epoch": 1,
-            "warmup_end_epoch": 8,
+            "warmup_end_epoch": 3,
             "steps_per_epoch": 5533,
-            "regu_final_lambda": 400,
+            "regu_final_lambda": 0.05,
             "update_per_optimizer_step": true,
         },
         "ignored_scopes": ["{re}.*NNCFEmbedding", "{re}.*qa_outputs*"]
