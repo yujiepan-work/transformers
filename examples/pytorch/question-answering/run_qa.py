@@ -563,6 +563,8 @@ def main():
             nncf_config["log_dir"] = training_args.output_dir
         if not os.path.exists(training_args.output_dir) and training_args.local_rank in [-1, 0]:
             os.makedirs(nncf_config["log_dir"])
+        import shutil
+        shutil.copy(training_args.nncf_config, nncf_config["log_dir"])
         if training_args.do_train:
             train_dataloader = get_train_dataloader_for_init(training_args, train_dataset, data_collator)
             class SquadInitializingDataloader(PTInitializingDataLoader):
