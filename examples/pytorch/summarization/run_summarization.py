@@ -113,6 +113,9 @@ class DataTrainingArguments:
     dataset_config_name: Optional[str] = field(
         default=None, metadata={"help": "The configuration name of the dataset to use (via the datasets library)."}
     )
+    dataset_dir: Optional[str] = field(
+        default=None, metadata={"help": "path to dataset."}
+    )
     text_column: Optional[str] = field(
         default=None,
         metadata={"help": "The name of the column in the datasets containing the full texts (for summarization)."},
@@ -316,9 +319,14 @@ def main():
     # download the dataset.
     if data_args.dataset_name is not None:
         # Downloading and loading a dataset from the hub.
-        raw_datasets = load_dataset(
-            data_args.dataset_name, data_args.dataset_config_name, cache_dir=model_args.cache_dir
-        )
+        if data_args.dataset_name in ['wikihow', 'arxiv_dataset']:
+            raw_datasets = load_dataset(data_args.dataset_name, 
+                                        data_args.dataset_config_name, 
+                                        data_dir=data_args.dataset_dir, ignore_verifications=True)
+        else:
+            raw_datasets = load_dataset(
+                data_args.dataset_name, data_args.dataset_config_name, cache_dir=model_args.cache_dir
+            )
     else:
         data_files = {}
         if data_args.train_file is not None:
@@ -339,6 +347,9 @@ def main():
     # Distributed training:
     # The .from_pretrained methods guarantee that only one local process can concurrently
     # download model & vocab.
+    if data_args.dataset_name == 'billsum':
+        raw_datasets['validation'] = raw_datasets['test']
+
     config = AutoConfig.from_pretrained(
         model_args.config_name if model_args.config_name else model_args.model_name_or_path,
         cache_dir=model_args.cache_dir,
@@ -373,7 +384,10 @@ def main():
     if training_args.do_train:
         column_names = raw_datasets["train"].column_names
     elif training_args.do_eval:
-        column_names = raw_datasets["validation"].column_names
+        if data_args.dataset_name == 'billsum':
+            column_names = raw_datasets['test'].column_names
+        else:
+            column_names = raw_datasets["validation"].column_names
     elif training_args.do_predict:
         column_names = raw_datasets["test"].column_names
     else:
