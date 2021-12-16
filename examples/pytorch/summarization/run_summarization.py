@@ -350,6 +350,15 @@ def main():
             data_files["test"] = data_args.test_file
             extension = data_args.test_file.split(".")[-1]
         raw_datasets = load_dataset(extension, data_files=data_files, cache_dir=model_args.cache_dir)
+
+    # Official billsum dataset does not possess a validation split
+    # Following pegasus implementation where train split is derived into 90% train and 10% validation
+    # while test split remains, ca_test split unuses
+    if data_args.dataset_name == 'billsum':
+        if 'validation' not in raw_datasets:
+            raw_datasets['train'] = load_dataset('billsum', split='train[:90%]')
+            raw_datasets['validation'] = load_dataset('billsum', split='train[-10%:]')
+        
     # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
     # https://huggingface.co/docs/datasets/loading_datasets.html.
 
@@ -358,8 +367,6 @@ def main():
     # Distributed training:
     # The .from_pretrained methods guarantee that only one local process can concurrently
     # download model & vocab.
-    if data_args.dataset_name == 'billsum':
-        raw_datasets['validation'] = raw_datasets['test']
     if data_args.dataset_name == 'wikihow' and training_args.do_train is False and training_args.do_eval is True:  
         # For some reason, do_predict require memory that is larger than a single V100 32GB can fit
         # we consider do_eval as do_predict for wikihow and substitute validation with test set

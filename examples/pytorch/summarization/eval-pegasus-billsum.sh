@@ -16,7 +16,7 @@ nohup python run_summarization.py \
     --dataset_name billsum \
     --max_source_length 1024 \
     --max_target_length 256 \
-    --do_eval \
+    --do_predict \
     --per_device_eval_batch_size 8 \
     --predict_with_generate \
     --num_beams 8 \
