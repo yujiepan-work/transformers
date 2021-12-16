@@ -360,6 +360,10 @@ def main():
     # download model & vocab.
     if data_args.dataset_name == 'billsum':
         raw_datasets['validation'] = raw_datasets['test']
+    if data_args.dataset_name == 'wikihow' and training_args.do_train is False and training_args.do_eval is True:  
+        # For some reason, do_predict require memory that is larger than a single V100 32GB can fit
+        # we consider do_eval as do_predict for wikihow and substitute validation with test set
+        raw_datasets['validation'] = raw_datasets['test']
 
     config = AutoConfig.from_pretrained(
         model_args.config_name if model_args.config_name else model_args.model_name_or_path,
