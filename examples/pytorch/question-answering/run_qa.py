@@ -411,7 +411,7 @@ def main():
 
         return tokenized_examples
 
-    if training_args.do_train:
+    if training_args.do_train or training_args.nncf_config is not None:
         if "train" not in raw_datasets:
             raise ValueError("--do_train requires a train dataset")
         train_dataset = raw_datasets["train"]
@@ -563,16 +563,18 @@ def main():
             nncf_config["log_dir"] = training_args.output_dir
         if not os.path.exists(training_args.output_dir) and training_args.local_rank in [-1, 0]:
             os.makedirs(nncf_config["log_dir"])
-        if training_args.do_train:
-            train_dataloader = get_train_dataloader_for_init(training_args, train_dataset, data_collator)
-            class SquadInitializingDataloader(PTInitializingDataLoader):
-                def get_inputs(self, dataloader_output):
-                    return (), dataloader_output
+        import shutil
+        shutil.copy(training_args.nncf_config, nncf_config["log_dir"])
+        # if training_args.do_train: #QAAS PTQ need
+        train_dataloader = get_train_dataloader_for_init(training_args, train_dataset, data_collator)
+        class SquadInitializingDataloader(PTInitializingDataLoader):
+            def get_inputs(self, dataloader_output):
+                return (), dataloader_output
 
-            nncf_config.register_extra_structs([
-                QuantizationRangeInitArgs(SquadInitializingDataloader(train_dataloader)),
-                BNAdaptationInitArgs(SquadInitializingDataloader(train_dataloader)),
-            ])
+        nncf_config.register_extra_structs([
+            QuantizationRangeInitArgs(SquadInitializingDataloader(train_dataloader)),
+            BNAdaptationInitArgs(SquadInitializingDataloader(train_dataloader)),
+        ])
 
     retval = AutoModelForQuestionAnswering.from_pretrained(
         model_args.model_name_or_path,
