@@ -326,18 +326,14 @@ def main():
     # download the dataset.
     if data_args.dataset_name is not None:
         # Downloading and loading a dataset from the hub.
-        if data_args.dataset_name in ['wikihow']:
-            raw_datasets = load_dataset(data_args.dataset_name, 
-                                        data_args.dataset_config_name, 
-                                        data_dir=data_args.dataset_dir)
-        elif data_args.dataset_name in ['arxiv_dataset']:
-            raw_datasets = load_dataset(data_args.dataset_name, 
-                                        data_args.dataset_config_name, 
-                                        data_dir=data_args.dataset_dir, ignore_verifications=True)
-        else:
-            raw_datasets = load_dataset(
-                data_args.dataset_name, data_args.dataset_config_name, cache_dir=model_args.cache_dir
-            )
+        # if data_args.dataset_name in ['wikihow']:
+        #     raw_datasets = load_dataset(data_args.dataset_name, 
+        #                                 data_args.dataset_config_name, 
+        #                                 data_dir=data_args.dataset_dir)
+        # else:
+        raw_datasets = load_dataset(
+            data_args.dataset_name, data_args.dataset_config_name, cache_dir=model_args.cache_dir
+        )
     else:
         data_files = {}
         if data_args.train_file is not None:
@@ -367,10 +363,10 @@ def main():
     # Distributed training:
     # The .from_pretrained methods guarantee that only one local process can concurrently
     # download model & vocab.
-    if data_args.dataset_name == 'wikihow' and training_args.do_train is False and training_args.do_eval is True:  
-        # For some reason, do_predict require memory that is larger than a single V100 32GB can fit
-        # we consider do_eval as do_predict for wikihow and substitute validation with test set
-        raw_datasets['validation'] = raw_datasets['test']
+    # if data_args.dataset_name == 'wikihow' and training_args.do_train is False and training_args.do_eval is True:  
+    #     # For some reason, do_predict require memory that is larger than a single V100 32GB can fit
+    #     # we consider do_eval as do_predict for wikihow and substitute validation with test set
+    #     raw_datasets['validation'] = raw_datasets['test']
 
     config = AutoConfig.from_pretrained(
         model_args.config_name if model_args.config_name else model_args.model_name_or_path,
@@ -425,10 +421,7 @@ def main():
     if training_args.do_train:
         column_names = raw_datasets["train"].column_names
     elif training_args.do_eval:        
-        if data_args.dataset_name == 'billsum':
-            column_names = raw_datasets['test'].column_names
-        else:
-            column_names = raw_datasets["validation"].column_names
+        column_names = raw_datasets["validation"].column_names
     elif training_args.do_predict:
         column_names = raw_datasets["test"].column_names
     else:
@@ -467,6 +460,18 @@ def main():
     def preprocess_function(examples):
         inputs = examples[text_column]
         targets = examples[summary_column]
+
+        # remove pairs where at least one record is None
+        # inputs, targets = map(
+        #     list,
+        #     zip(
+        #         *(
+        #             [examples[text_column][i], examples[summary_column][i]]
+        #             for i in range(len(examples[text_column]))
+        #             if examples[text_column][i] is not None and examples[summary_column][i] is not None
+        #         )
+        #     ),
+        # )
         inputs = [prefix + inp for inp in inputs]
         model_inputs = tokenizer(inputs, max_length=data_args.max_source_length, padding=padding, truncation=True)
 
