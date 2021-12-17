@@ -4,22 +4,24 @@ HOME=/data1/vchua
 source $HOME/miniconda3/etc/profile.d/conda.sh
 conda activate dgx4-pegasus-hf4p13
 
-WORKDIR=/data1/vchua/dgx4-pegasus-hf4p13/transformers/examples/pytorch/summarization
-
 export CUDA_VISIBLE_DEVICES=0
-export WANDB_PROJECT="pegasus-test"
+export WANDB_PROJECT=$(hostname)_pegasus_test
 export WANDB_DISABLED=false # Enable wandb
 export WANDB_WATCH=false # Disable gradient serialization to wandb
+export WANDB_USERNAME=vchua
+export WANDB_API_KEY=711a0d50fe1ca61fd3a1be54c82ef54dd9432aff
 
 DT=$(date +%F_%H-%M)
 RUNID=pegasus-billsum-${DT}
 OUTDIR=/data1/vchua/runs-pegasus-hf4p13/pegasus-test/${RUNID}
-mkdir -p $OUTDIR
+WORKDIR=/data1/vchua/dgx4-pegasus-hf4p13/transformers/examples/pytorch/summarization
+CKPT=google/pegasus-billsum
 
+mkdir -p $OUTDIR
 cd $WORKDIR
 
 python run_summarization.py \
-    --model_name_or_path google/pegasus-billsum \
+    --model_name_or_path $CKPT \
     --dataset_name billsum \
     --max_source_length 1024 \
     --max_target_length 256 \
@@ -30,3 +32,4 @@ python run_summarization.py \
     --overwrite_output_dir \
     --run_name $RUNID \
     --output_dir $OUTDIR > $OUTDIR/run.log 2>&1 
+
