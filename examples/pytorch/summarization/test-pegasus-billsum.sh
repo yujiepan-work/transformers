@@ -8,7 +8,7 @@ export WANDB_WATCH=false # Disable gradient serialization to wandb
 
 DT=$(date +%F_%H-%M)
 RUNID=pegasus-billsum-${DT}
-OUTDIR=/data1/vchua/pegasus-hf4p13/pegasus-eval/${RUNID}
+OUTDIR=/data1/vchua/pegasus-hf4p13/pegasus-test/${RUNID}
 mkdir -p $OUTDIR
 
 nohup python run_summarization.py \
