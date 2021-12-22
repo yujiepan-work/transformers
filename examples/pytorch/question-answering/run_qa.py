@@ -55,6 +55,7 @@ from nncf.torch.initialization import PTInitializingDataLoader
 from nncf.config.structures import BNAdaptationInitArgs
 from nncf.config.structures import QuantizationRangeInitArgs
 from nncf.common.utils.tensorboard import prepare_for_tensorboard
+from nncf.torch.initialization import register_default_init_args
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
 check_min_version("4.9.0")
@@ -207,18 +208,22 @@ class DataTrainingArguments:
                 assert extension in ["csv", "json"], "`test_file` should be a csv or a json file."
 
 
-def main():
+def main(args_overrides=None):
     # See all possible arguments in src/transformers/training_args.py
     # or by passing the --help flag to this script.
     # We now keep distinct sets of args, for a cleaner separation of concerns.
 
     parser = HfArgumentParser((ModelArguments, DataTrainingArguments, TrainingArguments))
-    if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
-        # If we pass only one argument to the script and it's the path to a json file,
-        # let's parse it to get our arguments.
-        model_args, data_args, training_args = parser.parse_json_file(json_file=os.path.abspath(sys.argv[1]))
+
+    if args_overrides is None:
+        if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
+            # If we pass only one argument to the script and it's the path to a json file,
+            # let's parse it to get our arguments.
+            model_args, data_args, training_args = parser.parse_json_file(json_file=os.path.abspath(sys.argv[1]))
+        else:
+            model_args, data_args, training_args = parser.parse_args_into_dataclasses()
     else:
-        model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+        model_args, data_args, training_args = parser.parse_args_into_dataclasses(args=args_overrides)
 
     # Setup logging
     logging.basicConfig(
@@ -288,6 +293,66 @@ def main():
         raw_datasets = load_dataset(extension, data_files=data_files, field="data", cache_dir=model_args.cache_dir)
     # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
     # https://huggingface.co/docs/datasets/loading_datasets.html.
+
+    # QAAS Dataset Setup
+    if training_args.nncf_config is not None:
+        tmp_nncf_config = NNCFConfig.from_json(training_args.nncf_config)
+        if 'restful' in tmp_nncf_config:
+            if tmp_nncf_config['restful'] == True:
+                # because squad doesnt have a test set, we make val set as test set
+                # val set is sampled from train set, following imagenet setup where qaas val set is 1:10 of test set but sampled from trainset
+                raw_datasets['test'] = raw_datasets['validation']
+
+                test_10pc_cnt = int(raw_datasets['test'].num_rows*0.1)
+
+                # Select test_10pc_cnt number from the front of train set b
+                # raw_datasets['validation'] = load_dataset(data_args.dataset_name, split="train[:{}]".format(test_10pc_cnt))
+
+                from datasets.arrow_dataset import Dataset
+                from math import ceil
+                import numpy as np
+
+                unique_title_in_train = list(set(raw_datasets['train']['title']))
+
+                n_unique_title = len(unique_title_in_train)
+                n_sample_per_title = int(ceil(test_10pc_cnt/n_unique_title))
+
+                # ===============
+                # routine to get the first n_sample_per_title samples of a title
+                current_title = None
+                row_list = []
+                for row, _title in enumerate(raw_datasets['train']['title']):
+                    if current_title != _title:
+                        current_title = _title
+                        row_list.append(row)
+                        title_n_entry = 1
+                    else:
+                        if title_n_entry < n_sample_per_title:
+                            row_list.append(row)
+                        title_n_entry += 1
+
+                raw_datasets['validation'] = Dataset.from_dict(raw_datasets['train'][row_list])
+                # ===============
+                
+                # routine to get the n_sample_per_title randomly
+                # current_title = None
+                # row_list_per_title = []
+                # row_list = []
+                # for row, _title in enumerate(raw_datasets['train']['title']):
+                #     if current_title != _title:
+                #         current_title = _title
+                #         if len(row_list)>0:
+                #             row_list_per_title.append(row_list)
+                #         row_list = []
+                #         row_list.append(row)
+                #     else:
+                #         row_list.append(row)
+
+                # sample_row_list = []
+                # for row_list in row_list_per_title:
+                #     sample_row_list.extend(np.random.choice(row_list, n_sample_per_title).tolist())
+
+                # raw_datasets['validation'] = Dataset.from_dict(raw_datasets['train'][sample_row_list])
 
     # Load pretrained model and tokenizer
     #
@@ -571,10 +636,25 @@ def main():
             def get_inputs(self, dataloader_output):
                 return (), dataloader_output
 
-        nncf_config.register_extra_structs([
-            QuantizationRangeInitArgs(SquadInitializingDataloader(train_dataloader)),
-            BNAdaptationInitArgs(SquadInitializingDataloader(train_dataloader)),
-        ])
+        autoq_eval_fn = 'placeholder'
+
+        skip = False
+        if 'initializer' in nncf_config['compression']:
+            if 'precision' in nncf_config['compression']['initializer']:
+                if 'type' in nncf_config['compression']['initializer']['precision']:
+                    if 'autoq' == nncf_config['compression']['initializer']['precision']['type']:
+                        skip = True
+        
+                        nncf_config = register_default_init_args(
+                            nncf_config, 
+                            SquadInitializingDataloader(train_dataloader), 
+                            autoq_eval_fn=autoq_eval_fn, 
+                            val_loader=train_dataloader)
+        if skip is False:
+            nncf_config.register_extra_structs([
+                QuantizationRangeInitArgs(SquadInitializingDataloader(train_dataloader)),
+                BNAdaptationInitArgs(SquadInitializingDataloader(train_dataloader)),
+            ])
 
     retval = AutoModelForQuestionAnswering.from_pretrained(
         model_args.model_name_or_path,
@@ -616,6 +696,28 @@ def main():
         compute_metrics=compute_metrics,
         compression_ctrl=compression_ctrl
     )
+
+    if autoq_eval_fn is not None:
+        def autoq_validate(model, eval_loader):
+            metrics = trainer.evaluate()
+            return metrics
+
+        def autoq_predict(model, eval_loader):
+            results = trainer.predict(predict_dataset, predict_examples)
+            metrics = results.metrics
+            return metrics
+
+        # keeping following for debugging purpose
+        # compression_ctrl.qenv.eval_fn = autoq_validate        
+        # bw_cfg = compression_ctrl.qenv.master_df.action.to_list()
+        # temp = compression_ctrl.qenv.evaluate_strategy(bw_cfg)
+
+        # compression_ctrl.qenv.eval_fn = autoq_predict        
+        # bw_cfg = compression_ctrl.qenv.master_df.action.to_list()
+        # temp = compression_ctrl.qenv.evaluate_strategy(bw_cfg)
+
+        if nncf_config.get('restful', False) is True:
+            return compression_ctrl, model, nncf_config, autoq_validate, autoq_predict
 
     # Training
     if training_args.do_train:
