@@ -717,7 +717,7 @@ def main(args_overrides=None):
         # temp = compression_ctrl.qenv.evaluate_strategy(bw_cfg)
 
         if nncf_config.get('restful', False) is True:
-            return compression_ctrl, model, nncf_config, autoq_validate, autoq_predict
+            return compression_ctrl, model, nncf_config, autoq_validate, autoq_predict, trainer
 
     # Training
     if training_args.do_train:
