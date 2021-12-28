@@ -359,6 +359,10 @@ class TrainingArguments:
     )
 
     optimize_model_before_eval: bool = field(default=False, metadata={"help": "Whether to crop linear layer before running evaluation."})
+    optimized_checkpoint: str = field(
+        default=None,
+        metadata={"help": "directory where a checkpoint of optimized model (head pruned and cropped ffn). Only effective when --optimize_model_before_eval is enabled"},
+    )
     do_train: bool = field(default=False, metadata={"help": "Whether to run training."})
     do_eval: bool = field(default=False, metadata={"help": "Whether to run eval on the dev set."})
     do_predict: bool = field(default=False, metadata={"help": "Whether to run predictions on the test set."})
