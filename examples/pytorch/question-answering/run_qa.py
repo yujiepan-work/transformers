@@ -411,7 +411,7 @@ def main():
 
         return tokenized_examples
 
-    if training_args.do_train:
+    if training_args.do_train or (training_args.do_eval and training_args.nncf_config is not None):
         if "train" not in raw_datasets:
             raise ValueError("--do_train requires a train dataset")
         train_dataset = raw_datasets["train"]
@@ -565,7 +565,7 @@ def main():
             os.makedirs(nncf_config["log_dir"])
         import shutil
         shutil.copy(training_args.nncf_config, nncf_config["log_dir"])
-        if training_args.do_train:
+        if training_args.do_train or (training_args.do_eval and nncf_config is not None):
             train_dataloader = get_train_dataloader_for_init(training_args, train_dataset, data_collator)
             class SquadInitializingDataloader(PTInitializingDataLoader):
                 def get_inputs(self, dataloader_output):
@@ -575,6 +575,9 @@ def main():
                 QuantizationRangeInitArgs(SquadInitializingDataloader(train_dataloader)),
                 BNAdaptationInitArgs(SquadInitializingDataloader(train_dataloader)),
             ])
+        nncf_config['optimize_model_before_eval'] = training_args.optimize_model_before_eval
+        nncf_config['optimized_checkpoint'] = training_args.optimized_checkpoint
+        nncf_config['qat_checkpoint'] = training_args.qat_checkpoint
 
     retval = AutoModelForQuestionAnswering.from_pretrained(
         model_args.model_name_or_path,
@@ -641,17 +644,18 @@ def main():
     if training_args.do_eval:
         logger.info("*** Evaluate ***")
         
-        if training_args.optimize_model_before_eval is True:
-            from nn_pruning.inference_model_patcher import optimize_model
-            trainer.model = optimize_model(trainer.model, "dense")
-        
-            if training_args.optimized_checkpoint is not None:
-                ckpt_pth = '/'.join([training_args.optimized_checkpoint, "pytorch_model.bin"])
-                    
-                if not os.path.exists(ckpt_pth):
-                    raise FileExistsError(ckpt_pth)
-                    
-                trainer.model.load_state_dict(torch.load(ckpt_pth), strict=True)
+        if training_args.nncf_config is None:
+            if training_args.optimize_model_before_eval is True:
+                from nn_pruning.inference_model_patcher import optimize_model
+                trainer.model = optimize_model(trainer.model, "dense")
+            
+                if training_args.optimized_checkpoint is not None:
+                    ckpt_pth = '/'.join([training_args.optimized_checkpoint, "pytorch_model.bin"])
+                        
+                    if not os.path.exists(ckpt_pth):
+                        raise FileExistsError(ckpt_pth)
+                        
+                    trainer.model.load_state_dict(torch.load(ckpt_pth), strict=True)
 
         import numpy as np
         import pandas as pd
@@ -659,7 +663,7 @@ def main():
 
         dlist=[]
         for n, m in trainer.model.named_modules():
-            if m.__class__.__name__ == "Linear" and 'qa_outputs' not in n:
+            if "Linear" in m.__class__.__name__ and 'qa_outputs' not in n:
                 l = OrderedDict()
                 l['linear_id'] = n
                 l['shape'] = list(m.weight.shape)

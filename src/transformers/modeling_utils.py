@@ -1359,8 +1359,26 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin, PushToHubMix
                 raise
         elif from_pt:
             if nncf_config is not None and nncf_eval:
+                model.load_state_dict(state_dict, strict=True)
+                if 'optimize_model_before_eval' in nncf_config and nncf_config['optimize_model_before_eval'] is True:
+                    from nn_pruning.inference_model_patcher import optimize_model
+                    model = optimize_model(model, "dense")
+
+                    if nncf_config['optimized_checkpoint'] is not None:
+                        ckpt_pth = '/'.join([nncf_config['optimized_checkpoint'], "pytorch_model.bin"])
+                        
+                        if not os.path.exists(ckpt_pth):
+                            raise FileExistsError(ckpt_pth)
+                        
+                        model.load_state_dict(torch.load(ckpt_pth), strict=True)
+
                 compression_algo_controller, model = create_compressed_model(model, nncf_config,
-                                                                             compression_state=state_dict)
+                                                                             compression_state=None)
+                if 'qat_checkpoint' in nncf_config and nncf_config['qat_checkpoint'] is not None:
+                    qat_ckpt_pth = '/'.join([nncf_config['qat_checkpoint'], "pytorch_model.bin"])
+                    if not os.path.exists(qat_ckpt_pth):
+                        raise FileExistsError(qat_ckpt_pth)
+                    model.load_state_dict(torch.load(qat_ckpt_pth), strict=True)
                 return compression_algo_controller, model
 
             model, missing_keys, unexpected_keys, mismatched_keys, error_msgs = cls._load_state_dict_into_model(
@@ -1385,8 +1403,28 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin, PushToHubMix
                 compression_state = torch.load(compression_state_file)
             else:
                 compression_state = None
+
+            if 'optimize_model_before_eval' in nncf_config and nncf_config['optimize_model_before_eval'] is True:
+                from nn_pruning.inference_model_patcher import optimize_model
+                model = optimize_model(model, "dense")
+
+                if nncf_config['optimized_checkpoint'] is not None:
+                    ckpt_pth = '/'.join([nncf_config['optimized_checkpoint'], "pytorch_model.bin"])
+                    
+                    if not os.path.exists(ckpt_pth):
+                        raise FileExistsError(ckpt_pth)
+                    
+                    model.load_state_dict(torch.load(ckpt_pth), strict=True)
+
             compression_algo_controller, model = create_compressed_model(model, nncf_config,
                                                                          compression_state=compression_state)
+
+            if 'qat_checkpoint' in nncf_config and nncf_config['qat_checkpoint'] is not None:
+                qat_ckpt_pth = '/'.join([nncf_config['qat_checkpoint'], "pytorch_model.bin"])
+                if not os.path.exists(qat_ckpt_pth):
+                    raise FileExistsError(qat_ckpt_pth)
+                model.load_state_dict(torch.load(qat_ckpt_pth), strict=True)
+
             return compression_algo_controller, model
 
         if output_loading_info:
