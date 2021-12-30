@@ -115,6 +115,7 @@ from .trainer_utils import (
     EvalPrediction,
     HPSearchBackend,
     PredictionOutput,
+    SchedulerType,
     ShardedDDPOption,
     TrainerMemoryTracker,
     TrainOutput,
@@ -853,7 +854,16 @@ class Trainer:
         Args:
             num_training_steps (int): The number of training steps to do.
         """
-        if self.lr_scheduler is None:
+        if self.args.lr_scheduler_type == SchedulerType.COSINE_WITH_RESTARTS:
+            self.lr_scheduler = get_scheduler(
+                self.args.lr_scheduler_type,
+                self.optimizer,
+                num_warmup_steps=self.args.get_warmup_steps(num_training_steps),
+                num_training_steps=num_training_steps,
+                num_cycles=self.args.cosine_cycles,
+            )
+
+        elif self.lr_scheduler is None:
             self.lr_scheduler = get_scheduler(
                 self.args.lr_scheduler_type,
                 self.optimizer,

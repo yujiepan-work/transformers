@@ -233,6 +233,7 @@ def get_scheduler(
     optimizer: Optimizer,
     num_warmup_steps: Optional[int] = None,
     num_training_steps: Optional[int] = None,
+    num_cycles: Optional[int] = None,
 ):
     """
     Unified API to get any scheduler from its name.
@@ -260,6 +261,9 @@ def get_scheduler(
 
     if name == SchedulerType.CONSTANT_WITH_WARMUP:
         return schedule_func(optimizer, num_warmup_steps=num_warmup_steps)
+
+    if name == SchedulerType.COSINE_WITH_RESTARTS:
+        return schedule_func(optimizer, num_warmup_steps=num_warmup_steps, num_training_steps=num_training_steps, num_cycles=num_cycles)
 
     # All other schedulers require `num_training_steps`
     if num_training_steps is None:

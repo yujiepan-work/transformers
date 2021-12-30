@@ -430,6 +430,7 @@ class TrainingArguments:
         default=0.0, metadata={"help": "Linear warmup over warmup_ratio fraction of total steps."}
     )
     warmup_steps: int = field(default=0, metadata={"help": "Linear warmup over warmup_steps."})
+    cosine_cycles: int = field(default=1, metadata={"help": "n cosine hard restarts over total training epoch."})
 
     log_level: Optional[str] = field(
         default="passive",
