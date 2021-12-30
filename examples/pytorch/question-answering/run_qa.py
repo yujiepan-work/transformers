@@ -655,7 +655,36 @@ def main():
                     if not os.path.exists(ckpt_pth):
                         raise FileExistsError(ckpt_pth)
                         
-                    trainer.model.load_state_dict(torch.load(ckpt_pth), strict=True)
+                    if training_args.burnin_nncf_sparsity is True:
+                        def calc_sparsity(t):
+                            return 1-(t.count_nonzero()/t.numel())
+
+                        def zero_state_dict(sd):
+                            new_sd = dict()
+
+                            for k,v in sd.items():
+                                k=k.replace("nncf_module.","")
+                                if 'weight' in k:
+                                    mask_k = 'nncf_module.'+k.replace("weight","pre_ops.0.op._binary_mask")
+                                    if mask_k in sd:
+                                        print('{:.3f} | original | {}'.format(calc_sparsity(v), k))
+                                        mask = sd[mask_k]
+                                        new_sd[k] = mask*v
+                                        print('{:.3f} | zeroed   | {}\n'.format(calc_sparsity(new_sd[k]), k))
+                                    else:
+                                        new_sd[k] = v
+                                elif 'pre_ops' in k:
+                                    continue
+                                else:
+                                    new_sd[k] = v
+                                    # print('{:.3f}'.format(calc_sparsity(new_sd[k])), k)
+                            return new_sd
+
+                        new_sd = zero_state_dict(torch.load(ckpt_pth))
+                        ckpt_pth = '/'.join([training_args.optimized_checkpoint, "pytorch_model_zeroed.bin"])
+                        torch.save(new_sd, ckpt_pth)
+
+                    trainer.model.load_state_dict(torch.load(ckpt_pth), strict=False)
 
         import numpy as np
         import pandas as pd
