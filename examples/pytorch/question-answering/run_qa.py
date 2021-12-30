@@ -690,23 +690,58 @@ def main():
         import pandas as pd
         from collections import OrderedDict
 
+        def calc_sparsity(t):
+            rate = 1-(t.count_nonzero()/t.numel())
+            if isinstance(rate, torch.Tensor):
+                return rate.item()
+            return rate
+
         dlist=[]
         for n, m in trainer.model.named_modules():
-            if "Linear" in m.__class__.__name__ and 'qa_outputs' not in n:
+            
+            if hasattr(m, 'weight'):
                 l = OrderedDict()
-                l['linear_id'] = n
+                l['layer_id'] = n
+                l['layer_type'] = m.__class__.__name__
+                l['param_type'] = 'weight'
                 l['shape'] = list(m.weight.shape)
-                l['param_count'] = np.prod(l['shape'])
+                l['nparam'] = np.prod(l['shape'])
+                l['nnz'] = m.weight.count_nonzero().item()
+                l['sparsity'] = calc_sparsity(m.weight)
                 dlist.append(l)
+
+                if hasattr(m, 'bias'):
+                    l = OrderedDict()
+                    l['layer_id'] = n
+                    l['layer_type'] = m.__class__.__name__
+                    l['param_type'] = 'bias'
+                    l['shape'] = list(m.bias.shape)
+                    l['nparam'] = np.prod(l['shape'])
+                    l['nnz'] = m.bias.count_nonzero().item()
+                    l['sparsity'] = calc_sparsity(m.bias)
+                    dlist.append(l)
+                
         df = pd.DataFrame.from_dict(dlist)
-        linear_layer_total_size_in_mb = df.param_count.sum()/1000/1000
+        linear_only_df = df[(df.param_type == 'weight') & (df.layer_type == 'Linear') & (df.layer_id != 'qa_outputs')]
+
+        linear_layer_total_size_in_mb = linear_only_df.nparam.sum()/1000/1000
 
         if training_args.output_dir is not None:
             prefix = 'XP_' if training_args.optimize_model_before_eval else ''
             csvpath = os.path.join(training_args.output_dir, 
-                                   "{}linear_layer_stats_total_{:.0f}M.csv".format(
-                                       prefix, linear_layer_total_size_in_mb))
+                                   "{}linear_layer_stats_{:.0f}M_nparam_wt_{:.2f}_sparsity.csv".format(
+                                       prefix, 
+                                       linear_layer_total_size_in_mb,
+                                       (1-linear_only_df.nnz.sum()/linear_only_df.nparam.sum())*100))
+            linear_only_df.to_csv(csvpath, index=True)
+            with open(os.path.splitext(csvpath)[0]+'.md', 'w') as f:
+                linear_only_df.to_markdown(f)
+
+            csvpath = os.path.join(training_args.output_dir, 
+                                   "layer_wise_sparsity_global_rate_{:.2f}.csv".format((1-df.nnz.sum()/df.nparam.sum())*100))
             df.to_csv(csvpath, index=True)
+            with open(os.path.splitext(csvpath)[0]+'.md', 'w') as f:
+                df.to_markdown(f)
 
         metrics = trainer.evaluate()
 
