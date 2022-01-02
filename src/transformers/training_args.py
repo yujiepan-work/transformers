@@ -363,7 +363,6 @@ class TrainingArguments:
         default=None,
         metadata={"help": "directory where a checkpoint of optimized model (head pruned and cropped ffn). Only effective when --optimize_model_before_eval is enabled"},
     )
-    burnin_nncf_sparsity: bool = field(default=False, metadata={"help": "Only effective if optimized_checkpoint and optimize_model_before_eval are valid. sparsity mask will be used to zero torch ckpt and being saved in other name and loaded"})
     qat_checkpoint: str = field(
         default=None,
         metadata={"help": "directory where a checkpoint of nncf quantized model, intended to be used for onnx generation"},

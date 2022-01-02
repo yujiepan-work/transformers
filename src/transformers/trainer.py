@@ -28,7 +28,7 @@ import time
 import warnings
 from logging import StreamHandler
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, OrderedDict, Tuple, Union
 
 from nncf.torch.nncf_network import NNCFNetwork
 from tqdm.auto import tqdm
@@ -1993,6 +1993,15 @@ class Trainer:
             if is_pretrained:
                 if state_dict is None:
                     state_dict = unwrapped_model.state_dict()
+                # FIXME temp workaround for nncf
+                new_sd = OrderedDict()
+                for k, v in state_dict.items():
+                    if 'nncf_module.' in k:
+                        new_k = k.replace("nncf_module.","")
+                        new_sd[new_k]=v
+                    else:
+                        new_sd[k]=v
+                state_dict=new_sd
                 unwrapped_model.save_pretrained(output_dir, state_dict=state_dict)
             else:
                 logger.info("Trainer.model is not a `PreTrainedModel`, only saving its state dict.")

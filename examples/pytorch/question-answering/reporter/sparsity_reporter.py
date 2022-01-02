@@ -20,7 +20,21 @@ class SparsityReporter():
         if isinstance(rate, torch.Tensor):
             return rate.item()
         return rate
-    
+
+    @staticmethod
+    def per_item_sparsity(state_dict):
+        dlist=[]
+        for key, param in state_dict.items():
+            l = OrderedDict()
+            l['layer_id'] = key
+            l['shape'] = list(param.shape)
+            l['nparam'] = np.prod(l['shape'])
+            l['nnz'] = param.count_nonzero().item()
+            l['sparsity'] = SparsityReporter.calc_sparsity(param)
+            dlist.append(l)
+        df = pd.DataFrame.from_dict(dlist)
+        return df
+
     def _get_layer_wise_sparsity(self):
         dlist=[]
         for n, m in self.model.named_modules():
