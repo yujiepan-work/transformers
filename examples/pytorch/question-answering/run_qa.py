@@ -662,11 +662,11 @@ def main():
         if hasattr(compression_ctrl, 'child_ctrls'):
             for ctrl in compression_ctrl.child_ctrls:
                 if ctrl.__class__.__name__ =='MagnitudeSparsityController':
-                    compression_ctrl.sparsify_params()
-            trainer.save_model(os.path.join(training_args.output_dir, 'sparsified_nncf_hfmodel'))
+                    ctrl.sparsify_params()
+            trainer.save_model(os.path.join(training_args.output_dir, 'sparsified_hfmodel'))
         elif compression_ctrl.__class__.__name__ =='MagnitudeSparsityController':
             compression_ctrl.sparsify_params()
-            trainer.save_model(os.path.join(training_args.output_dir, 'sparsified_nncf_hfmodel'))
+            trainer.save_model(os.path.join(training_args.output_dir, 'sparsified_hfmodel'))
 
         from reporter.sparsity_reporter import SparsityReporter
         df = SparsityReporter(trainer.model).sparsity_df

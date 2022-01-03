@@ -1,0 +1,35 @@
+{
+    "input_info": [
+        {
+            "sample_size": [
+                1,
+                384
+            ],
+            "type": "long"
+        },
+        {
+            "sample_size": [
+                1,
+                384
+            ],
+            "type": "long"
+        },
+        {
+            "sample_size": [
+                1,
+                384
+            ],
+            "type": "long"
+        }
+    ],
+    "compression": [
+        {
+            "algorithm": "magnitude_sparsity",
+            "sparsity_init": 0.8,
+            "ignored_scopes": [
+                "{re}.*NNCFEmbedding",
+                "{re}.*qa_outputs*"
+            ]
+        }
+    ]
+}
