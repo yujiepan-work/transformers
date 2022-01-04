@@ -357,7 +357,16 @@ class TrainingArguments:
             )
         },
     )
-
+    teacher: str = field(
+        default=None,
+        metadata={"help": "teacher of distillation"},
+    )
+    teacher_ratio: float = field(
+        default=0.5, metadata={"help": "teacher hardness in distillation, value between 0 to 1"}
+    )
+    distill_temp: float = field(
+        default=2.0, metadata={"help": "temperature of distillation."}
+    )
     optimize_model_before_eval: bool = field(default=False, metadata={"help": "Whether to crop linear layer before running evaluation."})
     optimized_checkpoint: str = field(
         default=None,

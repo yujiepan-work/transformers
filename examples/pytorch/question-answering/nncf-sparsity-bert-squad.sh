@@ -59,5 +59,7 @@ else
     eval $cmd
 fi
 
+# --teacher vuiseng9/bert-base-uncased-squad \
+# --teacher_ratio 0.9 \
 # --lr_scheduler_type cosine_with_restarts \
 # --warmup_ratio 0.05 \
