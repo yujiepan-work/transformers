@@ -13,32 +13,42 @@
             "type": "long"
         }
     ],
-    "compression": {
-        "algorithm": "quantization",
-        "initializer": {
-            "range": {
-                "num_init_samples": 32,
-                "type": "percentile",
-                "params":
-                {
-                    "min_percentile": 0.01,
-                    "max_percentile": 99.99
+    "compression": [
+        {
+            "algorithm": "magnitude_sparsity",
+            "sparsity_init": 0.0,
+            "ignored_scopes": [
+                "{re}.*NNCFEmbedding",
+                "{re}.*qa_outputs*"
+            ]
+        },
+        {
+            "algorithm": "quantization",
+            "initializer": {
+                "range": {
+                    "num_init_samples": 32,
+                    // "type": "percentile",
+                    // "params":
+                    // {
+                    //     "min_percentile": 0.01,
+                    //     "max_percentile": 99.99
+                    // }
+                },
+
+                "batchnorm_adaptation": {
+                    "num_bn_adaptation_samples": 200
                 }
             },
-
-            "batchnorm_adaptation": {
-                "num_bn_adaptation_samples": 200
+            "activations":
+            {
+                "mode": "symmetric"
+            },
+            "weights":
+            {
+                "mode": "symmetric",
+                "signed": true,
+                "per_channel": false
             }
-        },
-        "activations":
-        {
-            "mode": "symmetric"
-        },
-        "weights":
-        {
-            "mode": "symmetric",
-            "signed": true,
-            "per_channel": false
         }
-    }
+    ]
 }
