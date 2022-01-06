@@ -610,6 +610,13 @@ def main():
     # Expecting the following forward signature:
     # (input_ids, attention_mask, token_type_ids, ...)
         if nncf_config is not None:
+            # Burn-in zero mask on weights 
+            if hasattr(compression_ctrl, 'child_ctrls'):
+                for ctrl in compression_ctrl.child_ctrls:
+                    if ctrl.__class__.__name__ =='MagnitudeSparsityController':
+                        ctrl.sparsify_params()
+            elif compression_ctrl.__class__.__name__ =='MagnitudeSparsityController':
+                compression_ctrl.sparsify_params()
             compression_ctrl.export_model(training_args.to_onnx)
         else:
             model.to('cpu')
