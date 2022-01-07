@@ -623,6 +623,22 @@ def main():
             dummy_tensor = torch.ones([1, 384], dtype=torch.long)
             onnx.export(model, (dummy_tensor, dummy_tensor, dummy_tensor), training_args.to_onnx)
 
+        # Sparsity reporting for generated onnx -------------------
+        from reporter.bert_onnx_mapper import bert_onnx_mapper
+        from reporter.sparsity_reporter import SparsityReporter
+        
+        onnx_mapper = bert_onnx_mapper(training_args.to_onnx, variant='nncf-quantized')
+        if onnx_mapper.quantized_tensor_nodes is not None:
+            onnx_df = SparsityReporter.per_item_sparsity(onnx_mapper.quantized_tensor_nodes)
+
+        if training_args.output_dir is not None:
+            prefix = 'XP_' if training_args.optimize_model_before_eval else ''
+            csvpath = os.path.join(training_args.output_dir, "{}onnx_sparsity.csv".format(prefix))
+            onnx_df.to_csv(csvpath, index=True)
+            with open(os.path.splitext(csvpath)[0]+'.md', 'w') as f:
+                onnx_df.to_markdown(f)
+        # End of Sparsity reporting for generated onnx -------------------
+
     if teacher_model is not None:
         # Initialize our Trainer
         trainer = QADistillTrainer(
@@ -698,14 +714,14 @@ def main():
             for ctrl in compression_ctrl.child_ctrls:
                 if ctrl.__class__.__name__ =='MagnitudeSparsityController':
                     ctrl.sparsify_params()
-            trainer.save_model(os.path.join(training_args.output_dir, 'sparsified_hfmodel'))
+            trainer.save_model(os.path.join(training_args.output_dir, 'sparsified_model'))
         elif compression_ctrl.__class__.__name__ =='MagnitudeSparsityController':
             compression_ctrl.sparsify_params()
-            trainer.save_model(os.path.join(training_args.output_dir, 'sparsified_hfmodel'))
+            trainer.save_model(os.path.join(training_args.output_dir, 'sparsified_model'))
 
         from reporter.sparsity_reporter import SparsityReporter
         df = SparsityReporter(trainer.model).sparsity_df
-        linear_only_df = df[(df.param_type == 'weight') & df.layer_type.str.contains('Linear') & (df.layer_id != 'qa_outputs')]
+        linear_only_df = df[(df.param_type == 'weight') & df.layer_type.str.contains('Linear') & ~df.layer_id.str.contains('qa_outputs')]
         linear_layer_total_params_in_mega = linear_only_df.nparam.sum()/1000/1000
 
         if training_args.output_dir is not None:
