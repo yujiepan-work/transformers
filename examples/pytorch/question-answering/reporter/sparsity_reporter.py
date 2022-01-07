@@ -16,10 +16,12 @@ class SparsityReporter():
 
     @staticmethod
     def calc_sparsity(tensor):
-        rate = 1-(tensor.count_nonzero()/tensor.numel())
-        if isinstance(rate, torch.Tensor):
+        if isinstance(tensor, torch.Tensor):
+            rate = 1-(tensor.count_nonzero()/tensor.numel())
             return rate.item()
-        return rate
+        else:
+            rate = 1-(np.count_nonzero(tensor)/tensor.size)
+            return rate
 
     @staticmethod
     def per_item_sparsity(state_dict):
@@ -29,7 +31,10 @@ class SparsityReporter():
             l['layer_id'] = key
             l['shape'] = list(param.shape)
             l['nparam'] = np.prod(l['shape'])
-            l['nnz'] = param.count_nonzero().item()
+            if isinstance(param, torch.Tensor):
+                l['nnz'] = param.count_nonzero().item()
+            else:
+                l['nnz'] = np.count_nonzero(param)
             l['sparsity'] = SparsityReporter.calc_sparsity(param)
             dlist.append(l)
         df = pd.DataFrame.from_dict(dlist)
