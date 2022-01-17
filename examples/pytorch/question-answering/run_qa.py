@@ -606,6 +606,19 @@ def main():
     else:
         compression_ctrl, model = retval
 
+    if training_args.pruneofa_qat is True:
+        if nncf_config is not None:
+            # This routine is to enable using nncf qat with sparsity frozen
+            # otherwise, 
+            # to use this routine, provide nncf config with magnitude_sparsity with init of 0.0%
+            if hasattr(compression_ctrl, 'child_ctrls'):
+                for ctrl in compression_ctrl.child_ctrls:
+                    if ctrl.__class__.__name__ =='MagnitudeSparsityController':
+                        if ctrl.statistics()._storage['magnitude_sparsity'].target_sparsity_level != 0.0:
+                            raise ValueError('sparsity_init or multiple_sparsity_level must be 0.0')
+                        ctrl.reverse_masking()
+                        ctrl.freeze()
+
     if training_args.to_onnx:
     # Expecting the following forward signature:
     # (input_ids, attention_mask, token_type_ids, ...)

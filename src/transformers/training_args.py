@@ -372,6 +372,7 @@ class TrainingArguments:
         default=None,
         metadata={"help": "directory where a checkpoint of optimized model (head pruned and cropped ffn). Only effective when --optimize_model_before_eval is enabled"},
     )
+    pruneofa_qat: bool = field(default=False, metadata={"help": "reverse masking and freeze for qat"})
     qat_checkpoint: str = field(
         default=None,
         metadata={"help": "directory where a checkpoint of nncf quantized model, intended to be used for onnx generation"},

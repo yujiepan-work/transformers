@@ -147,6 +147,7 @@ sparse_8bit_lt_df['precision'] = '8bit'
 
 df = pd.concat([pt_df, sparse_8bit_nncfkd_df, sparse_8bit_bt_df, sparse_8bit_lt_df])
 
+# pruneofa 90% nnz = 8493502
 total_linear_params_structured_pruned_model = 20183040
 total_linear_params_bert_base_model = 84934656
 
