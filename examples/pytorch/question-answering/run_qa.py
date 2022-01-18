@@ -730,7 +730,10 @@ def main():
                     if not os.path.exists(ckpt_pth):
                         raise FileExistsError(ckpt_pth)
 
-                    trainer.model.load_state_dict(torch.load(ckpt_pth), strict=False)
+                    if torch.cuda.is_available() is False:
+                        trainer.model.load_state_dict(torch.load(ckpt_pth, map_location=torch.device('cpu')), strict=False)
+                    else:
+                        trainer.model.load_state_dict(torch.load(ckpt_pth), strict=False)
 
         # Sparsity reporting ---------------
 
