@@ -595,8 +595,8 @@ def main():
             )
             metrics["eval_samples"] = min(max_eval_samples, len(eval_dataset))
 
-            trainer.log_metrics("eval", metrics)
-            trainer.save_metrics("eval", metrics)
+            trainer.log_metrics("eval_{}".format(task), metrics)
+            trainer.save_metrics("eval_{}".format(task), metrics)
 
     if training_args.do_predict:
         logger.info("*** Predict ***")
