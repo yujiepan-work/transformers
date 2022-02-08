@@ -1372,6 +1372,60 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin, PushToHubMix
                         
                         model.load_state_dict(torch.load(ckpt_pth), strict=True)
 
+                    if nncf_config['tile_alignment'] is True:
+                        import math
+                        import numpy as np
+
+                        def lcm(a, b):
+                            return abs(a*b) // math.gcd(a, b)
+
+                        def calc_tile_aligned_row(current_row, nrow_per_tile):
+                            ntile = math.ceil( (current_nrow % nrow_per_tile)/nrow_per_tile ) + current_row//nrow_per_tile
+                            return int(ntile * nrow_per_tile)
+
+                        seqlen =  384
+                        batch_size = 1
+                        tile_size = 4096
+                        nrow_per_tile = lcm(batch_size*seqlen, tile_size)/(batch_size*seqlen)
+
+                        for tx_i, tx_blk in enumerate(model.bert.encoder.layer):
+                            current_nrow = tx_blk.intermediate.dense.weight.shape[0]
+                            new_nrow = calc_tile_aligned_row(current_nrow, nrow_per_tile)
+                            print("{:2}: {:4} -> {:4}".format(tx_i, current_nrow, new_nrow))
+
+                            # == Intermediate.dense
+                            # padding convention, a list of concatenated padding at front and end, e,g, an n-dimensional tensor would require 2n element list
+                            # so for a matrix, pad cfg will be [p, q, r, s], read as pad x at front of axis0, y at end of axis0, r at the front of axis1, s at the end of axis1
+                            pad_cfg = tuple([0, 0, 0, new_nrow - current_nrow]) 
+                            new_weight = tx_blk.intermediate.dense.weight.data.clone()
+                            new_weight = torch.nn.functional.pad(new_weight, pad_cfg, "constant", 0.0)
+                            
+                            pad_cfg = tuple([0, new_nrow - current_nrow])
+                            new_bias = tx_blk.intermediate.dense.bias.data.clone()
+                            new_bias = torch.nn.functional.pad(new_bias, pad_cfg, "constant", 0.0)
+                            
+                            new_mod = torch.nn.Linear(in_features=tx_blk.intermediate.dense.in_features, out_features=new_nrow)
+                            new_mod.weight.data = new_weight
+                            new_mod.bias.data = new_bias
+                            setattr(tx_blk.intermediate, "dense", new_mod)
+
+                            # == output.dense 
+                            pad_cfg = tuple([0, new_nrow - current_nrow, 0, 0]) 
+                            new_weight = tx_blk.output.dense.weight.data.clone()
+                            new_weight = torch.nn.functional.pad(new_weight, pad_cfg, "constant", 0.0)              
+                            
+                            new_bias = tx_blk.output.dense.bias.data.clone()
+                            # we dont have to pad bias for this layer
+
+                            new_mod = torch.nn.Linear(in_features=new_nrow, out_features=tx_blk.output.dense.out_features)
+                            new_mod.weight.data = new_weight
+                            new_mod.bias.data = new_bias
+                            setattr(tx_blk.output, "dense", new_mod)
+
+                        for tx_i, tx_blk in enumerate(model.bert.encoder.layer):
+                            print("{:2} | {:15}: {}".format(tx_i, "intermediate", tx_blk.intermediate.dense.weight.data.shape))
+                            print("{:2} | {:15}: {}".format(tx_i, "output", tx_blk.output.dense.weight.data.shape))
+
                 compression_algo_controller, model = create_compressed_model(model, nncf_config,
                                                                              compression_state=None)
                 if 'qat_checkpoint' in nncf_config and nncf_config['qat_checkpoint'] is not None:

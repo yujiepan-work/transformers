@@ -578,6 +578,7 @@ def main():
                 BNAdaptationInitArgs(SquadInitializingDataloader(train_dataloader)),
             ])
         nncf_config['optimize_model_before_eval'] = training_args.optimize_model_before_eval
+        nncf_config['tile_alignment'] = training_args.tile_alignment
         nncf_config['optimized_checkpoint'] = training_args.optimized_checkpoint
         nncf_config['qat_checkpoint'] = training_args.qat_checkpoint
 
@@ -619,7 +620,8 @@ def main():
                         ctrl.reverse_masking()
                         ctrl.freeze()
 
-    if training_args.to_onnx:
+    GEN_ONNX_AT_END = True
+    if training_args.to_onnx and GEN_ONNX_AT_END is False:
     # Expecting the following forward signature:
     # (input_ids, attention_mask, token_type_ids, ...)
         if nncf_config is not None:
@@ -723,7 +725,7 @@ def main():
             if training_args.optimize_model_before_eval is True:
                 from nn_pruning.inference_model_patcher import optimize_model
                 trainer.model = optimize_model(trainer.model, "dense")
-            
+
                 if training_args.optimized_checkpoint is not None:
                     ckpt_pth = '/'.join([training_args.optimized_checkpoint, "pytorch_model.bin"])
                         
@@ -735,7 +737,62 @@ def main():
                     else:
                         trainer.model.load_state_dict(torch.load(ckpt_pth), strict=False)
 
-        # Sparsity reporting ---------------
+                if training_args.tile_alignment is True:
+                    import math
+                    import numpy as np
+
+                    def lcm(a, b):
+                        return abs(a*b) // math.gcd(a, b)
+
+                    def calc_tile_aligned_row(current_row, nrow_per_tile):
+                        ntile = math.ceil( (current_nrow % nrow_per_tile)/nrow_per_tile ) + current_row//nrow_per_tile
+                        return int(ntile * nrow_per_tile)
+
+                    seqlen =  384
+                    batch_size = 1
+                    tile_size = 4096
+                    nrow_per_tile = lcm(batch_size*seqlen, tile_size)/(batch_size*seqlen)
+
+                    for tx_i, tx_blk in enumerate(trainer.model.bert.encoder.layer):
+                        current_nrow = tx_blk.intermediate.dense.weight.shape[0]
+                        new_nrow = calc_tile_aligned_row(current_nrow, nrow_per_tile)
+                        print("{:2}: {:4} -> {:4}".format(tx_i, current_nrow, new_nrow))
+
+                        # == Intermediate.dense
+                        # padding convention, a list of concatenated padding at front and end, e,g, an n-dimensional tensor would require 2n element list
+                        # so for a matrix, pad cfg will be [p, q, r, s], read as pad x at front of axis0, y at end of axis0, r at the front of axis1, s at the end of axis1
+                        pad_cfg = tuple([0, 0, 0, new_nrow - current_nrow]) 
+                        new_weight = tx_blk.intermediate.dense.weight.data.clone()
+                        new_weight = torch.nn.functional.pad(new_weight, pad_cfg, "constant", 0.0)
+                        
+                        pad_cfg = tuple([0, new_nrow - current_nrow])
+                        new_bias = tx_blk.intermediate.dense.bias.data.clone()
+                        new_bias = torch.nn.functional.pad(new_bias, pad_cfg, "constant", 0.0)
+                        
+                        new_mod = torch.nn.Linear(in_features=tx_blk.intermediate.dense.in_features, out_features=new_nrow)
+                        new_mod.weight.data = new_weight
+                        new_mod.bias.data = new_bias
+                        setattr(tx_blk.intermediate, "dense", new_mod)
+
+                        # == output.dense 
+                        pad_cfg = tuple([0, new_nrow - current_nrow, 0, 0]) 
+                        new_weight = tx_blk.output.dense.weight.data.clone()
+                        new_weight = torch.nn.functional.pad(new_weight, pad_cfg, "constant", 0.0)              
+                        
+                        new_bias = tx_blk.output.dense.bias.data.clone()
+                        # we dont have to pad bias for this layer
+
+                        new_mod = torch.nn.Linear(in_features=new_nrow, out_features=tx_blk.output.dense.out_features)
+                        new_mod.weight.data = new_weight
+                        new_mod.bias.data = new_bias
+                        setattr(tx_blk.output, "dense", new_mod)
+
+                    for tx_i, tx_blk in enumerate(trainer.model.bert.encoder.layer):
+                        print("{:2} | {:15}: {}".format(tx_i, "intermediate", tx_blk.intermediate.dense.weight.data.shape))
+                        print("{:2} | {:15}: {}".format(tx_i, "output", tx_blk.output.dense.weight.data.shape))
+                    trainer.save_model(os.path.join(training_args.output_dir, 'tile_aligned_ckpt'))
+
+        # Sparsity reporting ------------
 
         if hasattr(compression_ctrl, 'child_ctrls'):
             for ctrl in compression_ctrl.child_ctrls:
@@ -767,6 +824,52 @@ def main():
                 df.to_markdown(f)
         # End of Sparsity reporting ---------------
         
+        # --onnx_export---------
+        preonnx_dev = next(model.parameters()).device
+        if training_args.to_onnx and GEN_ONNX_AT_END is True:
+        # Expecting the following forward signature:
+        # (input_ids, attention_mask, token_type_ids, ...)
+            if nncf_config is not None:
+                is_quantized=False
+                # Burn-in zero mask on weights 
+                if hasattr(compression_ctrl, 'child_ctrls'):
+                    for ctrl in compression_ctrl.child_ctrls:
+                        if ctrl.__class__.__name__ =='MagnitudeSparsityController':
+                            ctrl.sparsify_params()
+                        elif ctrl.__class__.__name__ == 'QuantizationController':
+                            is_quantized=True
+                elif compression_ctrl.__class__.__name__ =='MagnitudeSparsityController':
+                    compression_ctrl.sparsify_params()
+                compression_ctrl.export_model(training_args.to_onnx)
+            
+                if is_quantized is True:
+                    # Sparsity reporting for generated onnx -------------------
+                    from reporter.bert_onnx_mapper import bert_onnx_mapper
+                    from reporter.sparsity_reporter import SparsityReporter
+                    
+                    onnx_mapper = bert_onnx_mapper(training_args.to_onnx, variant='nncf-quantized')
+                    if onnx_mapper.quantized_tensor_nodes is not None:
+                        onnx_df = SparsityReporter.per_item_sparsity(onnx_mapper.quantized_tensor_nodes)
+
+                    if training_args.output_dir is not None:
+                        prefix = 'XP_' if training_args.optimize_model_before_eval else ''
+                        csvpath = os.path.join(training_args.output_dir, "{}onnx_sparsity.csv".format(prefix))
+                        onnx_df.to_csv(csvpath, index=True)
+                        with open(os.path.splitext(csvpath)[0]+'.md', 'w') as f:
+                            onnx_df.to_markdown(f)
+                    # End of Sparsity reporting for generated onnx -------------------
+            else:
+                model.to('cpu')
+                dummy_tensor = torch.ones([1, 384], dtype=torch.long)
+                onnx.export(model, 
+                            (dummy_tensor, dummy_tensor, dummy_tensor), 
+                            training_args.to_onnx, 
+                            enable_onnx_checker=True,
+                            opset_version=10,
+                            # Do not fuse Conv+BN in ONNX. May cause dropout elements to appear in ONNX.
+                            training=True)
+            model.to(preonnx_dev)
+
         metrics = trainer.evaluate()
 
         max_eval_samples = data_args.max_eval_samples if data_args.max_eval_samples is not None else len(eval_dataset)

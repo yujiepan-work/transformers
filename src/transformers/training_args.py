@@ -368,6 +368,7 @@ class TrainingArguments:
         default=2.0, metadata={"help": "temperature of distillation."}
     )
     optimize_model_before_eval: bool = field(default=False, metadata={"help": "Whether to crop linear layer before running evaluation."})
+    tile_alignment: bool = field(default=False, metadata={"help": "Whether to crop linear layer according to certain tile dimension."})
     optimized_checkpoint: str = field(
         default=None,
         metadata={"help": "directory where a checkpoint of optimized model (head pruned and cropped ffn). Only effective when --optimize_model_before_eval is enabled"},
