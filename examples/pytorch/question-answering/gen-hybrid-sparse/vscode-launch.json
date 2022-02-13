@@ -1,0 +1,141 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "generate hybrid sparse config", 
+            "type": "python",
+            "request": "launch",
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "1",
+                "TORCH_DISTRIBUTED_DEBUG": "DETAIL",
+                "WANDB_DISABLED": "True"
+            },
+            "cwd": "${workspaceFolder}/transformers/examples/pytorch/question-answering/",
+            "program": "gen_hybrid_sparse_qa.py",
+            "args": [
+                "--model_name_or_path",
+                // "vuiseng9/bert-base-squadv1",
+                "bert-large-uncased-whole-word-masking-finetuned-squad",
+                "--gen_sparse_cfg",
+                // "--config_name", 
+                // "gen-hybrid-sparse/",
+                // "--to_onnx", 
+                // "/tmp/vscode-runs/memalign_tx/gen_hybrid_sparse/placeholder.onnx",
+                // "/data2/vchua/run/bert-large-uncased-whole-word-masking-finetuned-squad/config_2_heads_512_intermediate.json",
+                // "--gen_hybrid_sparse_model",
+                // "bert-large-uncased-whole-word-masking-finetuned-squad",
+                "--dataset_name", "squad",
+                "--do_eval",
+                "--per_device_eval_batch_size", "128",
+                "--max_seq_length", "384",
+                "--doc_stride", "128",
+                // "--nncf_config", 
+                // "/data1/vchua/tld-poc/repo/bert-base-squadv1-block-pruning-hybrid-filled-lt-nncf-57.92sparse-lt/nncf_bert_squad_sparsity.json",
+                // "/data1/vchua/tld-poc/repo/bert-base-squadv1-block-pruning-hybrid-filled-lt-nncf-57.92sparse-qat-lt/nncf_bert_squad_sparsity.json",
+                // "/data1/vchua/tld-poc/repo/bert-base-squadv1-block-pruning-hybrid-filled-lt-qat-lt/nncf_bert_squad_qat.json",
+                // "/data1/vchua/tld-poc/repo/bert-base-squadv1-qat-bt/nncf_bert_squad_qat.json",
+                // "${workspaceFolder}/transformers/nncf_bert_config_squad.json",
+                // "${workspaceFolder}/transformers/examples/pytorch/question-answering/nncf_fast_quant_sparse_wrap.json",
+                "--output_dir", 
+                "/tmp/vscode-runs/memalign_tx/gen_hybrid_sparse",
+                "--overwrite_output_dir"
+            ]
+        },
+        {
+            "name": "generate hybrid sparse + quantized model, onnx", 
+            "type": "python",
+            "request": "launch",
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "1",
+                "TORCH_DISTRIBUTED_DEBUG": "DETAIL",
+                "WANDB_DISABLED": "True"
+            },
+            "cwd": "${workspaceFolder}/transformers/examples/pytorch/question-answering/",
+            "program": "gen_hybrid_sparse_qa.py",
+            "args": [
+                "--model_name_or_path",
+                "bert-large-uncased-whole-word-masking-finetuned-squad",
+                "--gen_hybrid_sparse_model",
+                "--config_name", 
+                "gen-hybrid-sparse/generated_cfg/90pc_sparse-02_head-0512_ffnn/config.json",
+                // "gen-hybrid-sparse/generated_cfg/90pc_sparse-04_head-1024_ffnn/config.json",
+                // "gen-hybrid-sparse/generated_cfg/90pc_sparse-06_head-1536_ffnn/config.json",
+                // "gen-hybrid-sparse/generated_cfg/90pc_sparse-08_head-2048_ffnn/config.json",
+                "--to_onnx", "dummy_unused.onnx",
+                "--dataset_name", "squad",
+                "--do_eval",
+                "--per_device_eval_batch_size", "128",
+                "--max_seq_length", "384",
+                "--doc_stride", "128",
+                "--nncf_config", 
+                "${workspaceFolder}/transformers/examples/pytorch/question-answering/gen-hybrid-sparse/bert_nncf_wrap_sparse_quant.json",
+                "--output_dir", 
+                "/tmp/vscode-runs/memalign_tx/gen_hybrid_sparse",
+                "--overwrite_output_dir"
+            ]
+        },
+        {
+            "name": "generate unstructured sparse + quantized model, onnx", 
+            "type": "python",
+            "request": "launch",
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "1",
+                "TORCH_DISTRIBUTED_DEBUG": "DETAIL",
+                "WANDB_DISABLED": "True"
+            },
+            "cwd": "${workspaceFolder}/transformers/examples/pytorch/question-answering/",
+            "program": "run_qa.py",
+            "args": [
+                "--model_name_or_path",
+                "bert-large-uncased-whole-word-masking-finetuned-squad",
+                "--dataset_name", "squad",
+                "--do_eval",
+                "--per_device_eval_batch_size", "128",
+                "--max_seq_length", "384",
+                "--doc_stride", "128",
+                "--nncf_config", 
+                "${workspaceFolder}/transformers/examples/pytorch/question-answering/gen-hybrid-sparse/bert_nncf_wrap_sparse_quant.json",
+                "--output_dir", 
+                "/tmp/vscode-runs/memalign_tx/gen_hybrid_sparse/90pc_unstructured_sparse",
+                "--to_onnx", "/tmp/vscode-runs/memalign_tx/gen_hybrid_sparse/90pc_unstructured_sparse/90pc_unstructured_sparse-8bit.onnx",
+                "--overwrite_output_dir"
+            ]
+        },
+        {
+            "name": "Eval squad", 
+            "type": "python",
+            "request": "launch",
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "1",
+                "TORCH_DISTRIBUTED_DEBUG": "DETAIL",
+                "WANDB_DISABLED": "True"
+            },
+            "cwd": "${workspaceFolder}/transformers/examples/pytorch/question-answering/",
+            "program": "run_qa.py",
+            "args": [
+                "--model_name_or_path",
+                // "vuiseng9/bert-base-squadv1",
+                "/data2/vchua/run/bert-large-uncased-whole-word-masking-finetuned-squad",
+                // "bert-large-uncased-whole-word-masking-finetuned-squad",
+                "--dataset_name", "squad",
+                "--do_eval",
+                "--per_device_eval_batch_size", "128",
+                "--max_seq_length", "384",
+                "--doc_stride", "128",
+                // "--nncf_config", 
+                // "/data1/vchua/tld-poc/repo/bert-base-squadv1-block-pruning-hybrid-filled-lt-nncf-57.92sparse-lt/nncf_bert_squad_sparsity.json",
+                // "/data1/vchua/tld-poc/repo/bert-base-squadv1-block-pruning-hybrid-filled-lt-nncf-57.92sparse-qat-lt/nncf_bert_squad_sparsity.json",
+                // "/data1/vchua/tld-poc/repo/bert-base-squadv1-block-pruning-hybrid-filled-lt-qat-lt/nncf_bert_squad_qat.json",
+                // "/data1/vchua/tld-poc/repo/bert-base-squadv1-qat-bt/nncf_bert_squad_qat.json",
+                // "${workspaceFolder}/transformers/nncf_bert_config_squad.json",
+                "--output_dir", 
+                "/tmp/vscode-runs/memalign_tx/squad-eval",
+                // "--to_onnx", 
+                "--overwrite_output_dir"
+            ]
+        },
+    ]
+}

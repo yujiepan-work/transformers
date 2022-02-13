@@ -22,13 +22,16 @@ import logging
 import os
 import sys
 from dataclasses import dataclass, field
+from textwrap import indent
 from typing import Optional
 
 import datasets
+from numpy import ndim
 import torch
 from datasets import load_dataset, load_metric
 
 import transformers
+from transformers.utils.dummy_pt_objects import BertForQuestionAnswering
 from trainer_qa import QuestionAnsweringTrainer
 from transformers import (
     AutoConfig,
@@ -75,6 +78,18 @@ class ModelArguments:
     )
     config_name: Optional[str] = field(
         default=None, metadata={"help": "Pretrained config name or path if not the same as model_name"}
+    )
+    gen_sparse_cfg: bool = field(
+        default=False,
+        metadata={
+            "help": "generate model with varying head and dim, see code below to modify dimension sweeping"
+        },
+    )
+    gen_hybrid_sparse_model: bool = field(
+        default=False,
+        metadata={
+            "help": "instantiate model with the provided config_name and dump collaterals, hf model etc"
+        },
     )
     tokenizer_name: Optional[str] = field(
         default=None, metadata={"help": "Pretrained tokenizer name or path if not the same as model_name"}
@@ -574,8 +589,59 @@ def main():
                 BNAdaptationInitArgs(SquadInitializingDataloader(train_dataloader)),
             ])
 
+    # Loop that generates config
+    if model_args.gen_sparse_cfg is True:
+        import numpy as np
+        import json
+        for step in np.arange(4)+1:
+            head_stepsize = 2
+            dim_stepsize = 512
+            nhead = int(step*head_stepsize)
+            ndim = int(step*dim_stepsize)
+            config.intermediate_size = int(ndim)
+            config.tx_block_overall_sparsity = 0.9
+            config.pruned_heads = {str(l): list(range(nhead, config.num_attention_heads)) for l in range(config.num_hidden_layers)}
+
+            dirname = "gen-hybrid-sparse/generated_cfg"
+            os.makedirs(dirname, exist_ok=True)
+            cfg_label = "{:2.0f}pc_sparse-{}_head-{}_ffnn".format(config.tx_block_overall_sparsity*100, str(nhead).zfill(2), str(config.intermediate_size).zfill(4))
+            cfg_path = os.path.join(dirname, cfg_label)
+            config.save_pretrained(cfg_path)
+        exit()
+
+    if model_args.gen_hybrid_sparse_model is True and model_args.config_name is not None:
+        model = AutoModelForQuestionAnswering.from_config(config)
+        bert_large_numel = 24 * ( 4* 1024*1024 + 2* 1024*4096 )
+
+        numel_structured = 0
+        for tx_i, tx_blk in enumerate(model.bert.encoder.layer):
+            for n,m in tx_blk.named_parameters():
+                if 'LayerNorm' not in n and 'bias' not in n:
+                    numel_structured += m.numel()
+        current_sparsity = 1-numel_structured/bert_large_numel
+        sparsity_gap = config.tx_block_overall_sparsity-current_sparsity
+
+        numel_to_prune = sparsity_gap*bert_large_numel
+        unstructured_sparsity_to_set = numel_to_prune / numel_structured
+
+        if isinstance(nncf_config['compression'], list):
+            for idx, algo_cfg in enumerate(nncf_config['compression']):
+                if algo_cfg['algorithm'] == 'magnitude_sparsity':
+                    nncf_config['compression'][idx]['sparsity_init'] = unstructured_sparsity_to_set
+                    break
+        else:
+            if nncf_config['compression'] == 'magnitude_sparsity':
+                nncf_config['compression']['sparsity_init'] = unstructured_sparsity_to_set
+            else:
+                raise ValueError("pls use magnitude_sparsity algorithm for hybrid model")
+
+        pretrained_ckpt_path = os.path.join(training_args.output_dir, model_args.config_name.split("/")[-2])
+        model.save_pretrained(pretrained_ckpt_path)
+    else:
+        pretrained_ckpt_path = model_args.model_name_or_path
+
     retval = AutoModelForQuestionAnswering.from_pretrained(
-        model_args.model_name_or_path,
+        pretrained_ckpt_path,
         from_tf=bool(".ckpt" in model_args.model_name_or_path),
         config=config,
         cache_dir=model_args.cache_dir,
@@ -591,9 +657,12 @@ def main():
     else:
         compression_ctrl, model = retval
 
+    sctrl = compression_ctrl.child_ctrls[0]
+    for sminfo in sctrl.sparsified_module_info:
+        srate = 1- len(sminfo.operand.binary_mask.nonzero())/sminfo.operand.binary_mask.data.numel()
+        print("{:.2f} | {}".format(srate, sminfo.module_node_name))
+
     if training_args.to_onnx:
-    # Expecting the following forward signature:
-    # (input_ids, attention_mask, token_type_ids, ...)
         is_quantized=False
         if hasattr(compression_ctrl, 'child_ctrls'):
             for ctrl in compression_ctrl.child_ctrls:
@@ -604,30 +673,41 @@ def main():
             # trainer.save_model(os.path.join(training_args.output_dir, 'sparsified_model'))
         elif compression_ctrl.__class__.__name__ =='MagnitudeSparsityController':
             compression_ctrl.sparsify_params()
+            # trainer.save_model(os.path.join(training_args.output_dir, 'sparsified_model'))
 
+    # Expecting the following forward signature:
+    # (input_ids, attention_mask, token_type_ids, ...)
         if nncf_config is not None:
-            compression_ctrl.export_model(training_args.to_onnx)
+            if model_args.gen_hybrid_sparse_model is True and model_args.config_name is not None:
+                if is_quantized is True:
+                    onnx_path = os.path.join(pretrained_ckpt_path, os.path.basename(pretrained_ckpt_path) + '-8bit.onnx')
+                else:
+                    onnx_path = os.path.join(pretrained_ckpt_path, os.path.basename(pretrained_ckpt_path) + '-fp32.onnx')
 
-            if is_quantized is True:
-                # Sparsity reporting for generated onnx -------------------
-                from reporter.bert_onnx_mapper import bert_onnx_mapper
-                from reporter.sparsity_reporter import SparsityReporter
-                
-                onnx_mapper = bert_onnx_mapper(training_args.to_onnx, variant='nncf-quantized')
-                if onnx_mapper.quantized_tensor_nodes is not None:
-                    onnx_df = SparsityReporter.per_item_sparsity(onnx_mapper.quantized_tensor_nodes)
+                compression_ctrl.export_model(onnx_path)
+                if is_quantized is True:
+                    # Sparsity reporting for generated onnx -------------------
+                    from reporter.bert_onnx_mapper import bert_onnx_mapper
+                    from reporter.sparsity_reporter import SparsityReporter
+                    
+                    onnx_mapper = bert_onnx_mapper(onnx_path, variant='nncf-quantized')
+                    if onnx_mapper.quantized_tensor_nodes is not None:
+                        onnx_df = SparsityReporter.per_item_sparsity(onnx_mapper.quantized_tensor_nodes)
 
-                if training_args.output_dir is not None:
-                    csvpath = os.path.splitext(training_args.to_onnx)[0] + "-onnx_sparsity.csv"
-                    onnx_df.to_csv(csvpath, index=True)
-                    with open(os.path.splitext(csvpath)[0]+'.md', 'w') as f:
-                        onnx_df.to_markdown(f)
-                    # End of Sparsity reporting for generated onnx --
+                    if training_args.output_dir is not None:
+                        csvpath = os.path.splitext(onnx_path)[0] + "-onnx_sparsity.csv"
+                        onnx_df.to_csv(csvpath, index=True)
+                        with open(os.path.splitext(csvpath)[0]+'.md', 'w') as f:
+                            onnx_df.to_markdown(f)
+                        # End of Sparsity reporting for generated onnx -------------------
+            else:
+                compression_ctrl.export_model(training_args.to_onnx)
+
+            exit()
         else:
             model.to('cpu')
             dummy_tensor = torch.ones([1, 384], dtype=torch.long)
             onnx.export(model, (dummy_tensor, dummy_tensor, dummy_tensor), training_args.to_onnx)
-        exit()
 
     # Initialize our Trainer
     trainer = QuestionAnsweringTrainer(
