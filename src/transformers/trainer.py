@@ -17,6 +17,7 @@ The Trainer class, to easily train a 🤗 Transformers from scratch or finetune 
 """
 
 import collections
+import functools
 import contextlib
 import inspect
 import math
@@ -29,7 +30,7 @@ import time
 import warnings
 from collections.abc import Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, OrderedDict, Tuple, Union
 
 from tqdm.auto import tqdm
 
@@ -2309,8 +2310,54 @@ class Trainer:
         # Will be useful when we have an iterable dataset so don't know its length.
 
         observed_num_examples = 0
+
+        def convert_id_to_token_per_batch(batched_input):
+            def convert_id_to_token_per_sequence(input_sequence):
+                return list(map(self.tokenizer._convert_id_to_token, input_sequence))
+            return list(map(convert_id_to_token_per_sequence, batched_input))
+
+        if self.args.cache_activation is True and 'bert' in self.model.__class__.__name__.lower():
+            cache_store = OrderedDict()
+            # each key has a value of list, where each element is per batch basis
+            # Keys: inputs, lookedup_sequence, ffnn10_input, ffnn10_output, ffnn11_input, ffnn11_output
+            cache_store['inputs'] = []
+            cache_store['lookedup_sequence'] = []
+            cache_store['ffnn10_input'] = []
+            cache_store['ffnn10_output'] = []
+            cache_store['ffnn11_input'] = []
+            cache_store['ffnn11_output'] = []
+
+            def get_hook(store, store_identifier, hook_type):
+                def cache_input_callback_fn(module, input, store, store_identifier):
+                    store[store_identifier].append(input)
+                
+                def cache_output_callback_fn(module, input, output, store, store_identifier):
+                    store[store_identifier].append(output)
+
+                if hook_type == 'fwd_pre_hook':
+                    return functools.partial(cache_input_callback_fn, store=store, store_identifier=store_identifier)
+                elif hook_type == 'fwd_hook':
+                    return functools.partial(cache_output_callback_fn, store=store, store_identifier=store_identifier)
+
+            hooklist = []
+            for tx_layer in [10, 11]:
+                hooklist.append(
+                    self.model.bert.encoder.layer[tx_layer].intermediate.register_forward_pre_hook(
+                        get_hook(cache_store, 'ffnn{}_input'.format(str(tx_layer)), 'fwd_pre_hook')
+                    )
+                )
+                hooklist.append(
+                    self.model.bert.encoder.layer[tx_layer].output.dense.register_forward_hook(
+                        get_hook(cache_store, 'ffnn{}_output'.format(str(tx_layer)), 'fwd_hook')
+                    )
+                )
+
         # Main evaluation loop
         for step, inputs in enumerate(dataloader):
+            if self.args.cache_activation is True and 'bert' in self.model.__class__.__name__.lower():
+                cache_store['inputs'].append(inputs)
+                cache_store['lookedup_sequence'].append(convert_id_to_token_per_batch(inputs['input_ids']))
+
             # Update the observed num examples
             observed_batch_size = find_batch_size(inputs)
             if observed_batch_size is not None:
@@ -2352,6 +2399,11 @@ class Trainer:
 
                 # Set back to None to begin a new accumulation
                 losses_host, preds_host, labels_host = None, None, None
+
+        if self.args.cache_activation is True and 'bert' in self.model.__class__.__name__.lower():
+            for h in hooklist:
+                h.remove()
+            self.cache_store = cache_store
 
         if args.past_index and hasattr(self, "_past"):
             # Clean the state at the end of the evaluation loop

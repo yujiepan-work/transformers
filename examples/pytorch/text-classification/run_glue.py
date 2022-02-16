@@ -503,7 +503,7 @@ def main():
         # Loop to handle MNLI double evaluation (matched, mis-matched)
         tasks = [data_args.task_name]
         eval_datasets = [eval_dataset]
-        if data_args.task_name == "mnli":
+        if data_args.task_name == "mnli" and training_args.cache_activation is False:
             tasks.append("mnli-mm")
             eval_datasets.append(raw_datasets["validation_mismatched"])
 
@@ -517,6 +517,13 @@ def main():
 
             trainer.log_metrics("eval", metrics)
             trainer.save_metrics("eval", metrics)
+        
+        if training_args.cache_activation is True:
+            import torch
+            # trainer.cache_store
+            pklpth = os.path.join(training_args.output_dir, "{}_cached_activation.pkl".format(data_args.task_name))
+            torch.save(trainer.cache_store, pklpth)
+            print("yatta")
 
     if training_args.do_predict:
         logger.info("*** Predict ***")
