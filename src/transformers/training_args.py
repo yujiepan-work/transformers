@@ -344,7 +344,7 @@ class TrainingArguments:
             The token to use to push the model to the Hub. Will default to the token in the cache folder obtained with
             :obj:`huggingface-cli login`.
     """
-
+    
     output_dir: str = field(
         metadata={"help": "The output directory where the model predictions and checkpoints will be written."},
     )
@@ -357,10 +357,29 @@ class TrainingArguments:
             )
         },
     )
-
+    teacher: str = field(
+        default=None,
+        metadata={"help": "teacher of distillation"},
+    )
+    teacher_ratio: float = field(
+        default=0.5, metadata={"help": "teacher hardness in distillation, value between 0 to 1"}
+    )
+    distill_temp: float = field(
+        default=2.0, metadata={"help": "temperature of distillation."}
+    )
+    # optimize_model_before_eval: bool = field(default=False, metadata={"help": "Whether to crop linear layer before running evaluation."})
+    # optimized_checkpoint: str = field(
+    #     default=None,
+    #     metadata={"help": "directory where a checkpoint of optimized model (head pruned and cropped ffn). Only effective when --optimize_model_before_eval is enabled"},
+    # )
+    # pruneofa_qat: bool = field(default=False, metadata={"help": "reverse masking and freeze for qat"})
+    # qat_checkpoint: str = field(
+    #     default=None,
+    #     metadata={"help": "directory where a checkpoint of nncf quantized model, intended to be used for onnx generation"},
+    # )
     do_train: bool = field(default=False, metadata={"help": "Whether to run training."})
     do_eval: bool = field(default=False, metadata={"help": "Whether to run eval on the dev set."})
-    do_predict: bool = field(default=False, metadata={"help": "Whether to run predictions on the test set."})
+    do_predict: bool = field(default=False, metadata={"help": "Whether to run predictions on the test set."})   
     evaluation_strategy: IntervalStrategy = field(
         default="no",
         metadata={"help": "The evaluation strategy to use."},

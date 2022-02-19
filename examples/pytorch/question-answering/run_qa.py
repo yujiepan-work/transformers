@@ -48,6 +48,8 @@ from transformers.utils import check_min_version
 from transformers.utils.versions import require_version
 from utils_qa import postprocess_qa_predictions
 
+from qa_distill_trainer import QADistillTrainer
+
 from torch import onnx
 
 from nncf import NNCFConfig
@@ -411,7 +413,7 @@ def main():
 
         return tokenized_examples
 
-    if training_args.do_train:
+    if training_args.do_train or (training_args.do_eval and training_args.nncf_config is not None):
         if "train" not in raw_datasets:
             raise ValueError("--do_train requires a train dataset")
         train_dataset = raw_datasets["train"]
@@ -563,7 +565,9 @@ def main():
             nncf_config["log_dir"] = training_args.output_dir
         if not os.path.exists(training_args.output_dir) and training_args.local_rank in [-1, 0]:
             os.makedirs(nncf_config["log_dir"])
-        if training_args.do_train:
+        import shutil
+        shutil.copy(training_args.nncf_config, nncf_config["log_dir"])
+        if training_args.do_train or (training_args.do_eval and nncf_config is not None):
             train_dataloader = get_train_dataloader_for_init(training_args, train_dataset, data_collator)
             class SquadInitializingDataloader(PTInitializingDataLoader):
                 def get_inputs(self, dataloader_output):
@@ -573,6 +577,14 @@ def main():
                 QuantizationRangeInitArgs(SquadInitializingDataloader(train_dataloader)),
                 BNAdaptationInitArgs(SquadInitializingDataloader(train_dataloader)),
             ])
+
+    teacher_model = None
+    if training_args.teacher is not None:
+        teacher_model = AutoModelForQuestionAnswering.from_pretrained(
+            training_args.teacher,
+            from_tf=bool(".ckpt" in training_args.teacher),
+            cache_dir=model_args.cache_dir,
+        )
 
     retval = AutoModelForQuestionAnswering.from_pretrained(
         model_args.model_name_or_path,
@@ -601,19 +613,37 @@ def main():
             dummy_tensor = torch.ones([1, 384], dtype=torch.long)
             onnx.export(model, (dummy_tensor, dummy_tensor, dummy_tensor), training_args.to_onnx)
 
-    # Initialize our Trainer
-    trainer = QuestionAnsweringTrainer(
-        model=model,
-        args=training_args,
-        train_dataset=train_dataset if training_args.do_train else None,
-        eval_dataset=eval_dataset if training_args.do_eval else None,
-        eval_examples=eval_examples if training_args.do_eval else None,
-        tokenizer=tokenizer,
-        data_collator=data_collator,
-        post_process_function=post_processing_function,
-        compute_metrics=compute_metrics,
-        compression_ctrl=compression_ctrl
-    )
+    if teacher_model is not None:
+        # Initialize our Trainer
+        trainer = QADistillTrainer(
+            teacher=teacher_model,
+            hardness=training_args.teacher_ratio,
+            temperature=training_args.distill_temp,
+            model=model,
+            args=training_args,
+            train_dataset=train_dataset if training_args.do_train else None,
+            eval_dataset=eval_dataset if training_args.do_eval else None,
+            eval_examples=eval_examples if training_args.do_eval else None,
+            tokenizer=tokenizer,
+            data_collator=data_collator,
+            post_process_function=post_processing_function,
+            compute_metrics=compute_metrics,
+            compression_ctrl=compression_ctrl
+        )
+    else:
+        # Initialize our Trainer
+        trainer = QuestionAnsweringTrainer(
+            model=model,
+            args=training_args,
+            train_dataset=train_dataset if training_args.do_train else None,
+            eval_dataset=eval_dataset if training_args.do_eval else None,
+            eval_examples=eval_examples if training_args.do_eval else None,
+            tokenizer=tokenizer,
+            data_collator=data_collator,
+            post_process_function=post_processing_function,
+            compute_metrics=compute_metrics,
+            compression_ctrl=compression_ctrl
+        )
 
     # Training
     if training_args.do_train:

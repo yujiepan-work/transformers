@@ -28,7 +28,7 @@ import time
 import warnings
 from logging import StreamHandler
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, OrderedDict, Tuple, Union
 
 from nncf.torch.nncf_network import NNCFNetwork
 from tqdm.auto import tqdm
@@ -810,16 +810,30 @@ class Trainer:
         We provide a reasonable default that works well. If you want to use something else, you can pass a tuple in the
         Trainer's init through :obj:`optimizers`, or subclass and override this method in a subclass.
         """
+        # TODO: revision needed. initial nncf movement-sparsity has hardcoded importance learning rate scheduling 
         if self.optimizer is None:
+            score_params = []
+            for n, p in self.model.named_parameters():
+                if not p.requires_grad:
+                    continue
+                if "importance" in n:
+                    score_params.append(p)
+
             decay_parameters = get_parameter_names(self.model, [nn.LayerNorm])
             decay_parameters = [name for name in decay_parameters if "bias" not in name]
+            decay_parameters = [name for name in decay_parameters if "importance" not in name]
             optimizer_grouped_parameters = [
+                {
+                    "params": score_params,
+                    "weight_decay": 0.0,
+                    "lr": 0.01
+                },
                 {
                     "params": [p for n, p in self.model.named_parameters() if n in decay_parameters],
                     "weight_decay": self.args.weight_decay,
                 },
                 {
-                    "params": [p for n, p in self.model.named_parameters() if n not in decay_parameters],
+                    "params": [p for n, p in self.model.named_parameters() if n not in decay_parameters and 'importance' not in n],
                     "weight_decay": 0.0,
                 },
             ]
@@ -1268,7 +1282,7 @@ class Trainer:
         for epoch in range(epochs_trained, num_train_epochs):
             if self.compression_ctrl is not None:
                 self.compression_ctrl.scheduler.epoch_step()
-                print(self.compression_ctrl.statistics().to_str())
+                # print(self.compression_ctrl.statistics().to_str())
             if isinstance(train_dataloader, DataLoader) and isinstance(train_dataloader.sampler, DistributedSampler):
                 train_dataloader.sampler.set_epoch(epoch)
             elif isinstance(train_dataloader.dataset, IterableDatasetShard):
@@ -1289,6 +1303,8 @@ class Trainer:
             self.control = self.callback_handler.on_epoch_begin(args, self.state, self.control)
 
             for step, inputs in enumerate(epoch_iterator):
+                # if self.compression_ctrl is not None:
+                #     self.compression_ctrl.scheduler.step()
 
                 # Skip past any already trained steps if resuming training
                 if steps_trained_in_current_epoch > 0:
@@ -1314,6 +1330,12 @@ class Trainer:
                     with model.no_sync():
                         curr_loss = self.training_step(model, inputs)
                 else:
+                    # curr_loss = torch.zeros([])
+                    # print("-------------------------------------------")
+                    # print("current_epoch:", self.compression_ctrl.scheduler.current_epoch)
+                    # print("current_step:", self.compression_ctrl.scheduler.current_step)
+                    # print("_steps_in_current_epoch:", self.compression_ctrl.scheduler._steps_in_current_epoch)
+                    # print("current_importance_threshold:", self.compression_ctrl.scheduler.current_importance_threshold)
                     curr_loss = self.training_step(model, inputs)
 
                 tr_loss += curr_loss
@@ -1472,8 +1494,22 @@ class Trainer:
                 logs["compression_loss"] = self.compression_ctrl.loss().item()
                 compression_stats = self.compression_ctrl.statistics()
                 for key, value in prepare_for_tensorboard(compression_stats).items():
-                    logs["compression/statistics/{0}".format(key)] = value
-                print(compression_stats.to_str())
+                    logs["nncf/{0}".format(key)] = value
+                # print(compression_stats.to_str())
+
+            if False:
+                if hasattr(self, "tb_callback") is False:
+                    for cb in self.callback_handler.callbacks:
+                        if cb.__class__.__name__ == "TensorBoardCallback":
+                            self.tb_callback = cb
+                
+                if self.tb_callback is not None and self.tb_callback.tb_writer is not None:
+                    with torch.no_grad():
+                        for n, p in model.named_parameters():
+                            if p.__class__.__name__ == 'CompressionParameter':
+                                label = n[38:].replace("pre_ops.0.op._importance","importance")
+                                self.tb_callback.tb_writer.add_histogram(label, p, global_step=self.state.global_step)
+                            
 
             self._total_loss_scalar += tr_loss_scalar
             self._globalstep_last_logged = self.state.global_step

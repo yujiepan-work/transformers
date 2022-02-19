@@ -50,6 +50,7 @@ from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version
 from transformers.utils.versions import require_version
 
+from glue_distill_trainer import GlueDistillTrainer
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
 check_min_version("4.9.0")
@@ -421,6 +422,9 @@ def main():
         if not os.path.exists(training_args.output_dir) and training_args.local_rank in [-1, 0]:
             os.makedirs(nncf_config["log_dir"])
 
+        import shutil
+        shutil.copy(training_args.nncf_config, nncf_config["log_dir"])
+
         if training_args.do_train:
             train_dataloader = get_train_dataloader_for_init(training_args,
                                                              train_dataset,
@@ -461,7 +465,14 @@ def main():
             nncf_config.register_extra_structs([QuantizationRangeInitArgs(initializing_data_loader),
                                                 BNAdaptationInitArgs(initializing_data_loader)])
 
-
+    teacher_model = None
+    if training_args.teacher is not None:
+        teacher_model = AutoModelForSequenceClassification.from_pretrained(
+            training_args.teacher,
+            from_tf=bool(".ckpt" in training_args.teacher),
+            cache_dir=model_args.cache_dir,
+        )
+    
     retval = AutoModelForSequenceClassification.from_pretrained(
         model_args.model_name_or_path,
         from_tf=bool(".ckpt" in model_args.model_name_or_path),
@@ -540,17 +551,33 @@ def main():
     else:
         data_collator = None
 
-    # Initialize our Trainer
-    trainer = Trainer(
-        model=model,
-        args=training_args,
-        train_dataset=train_dataset if training_args.do_train else None,
-        eval_dataset=eval_dataset if training_args.do_eval else None,
-        compute_metrics=compute_metrics,
-        tokenizer=tokenizer,
-        data_collator=data_collator,
-        compression_ctrl=compression_ctrl
-    )
+    if teacher_model is not None:
+        # Initialize our Trainer
+        trainer = GlueDistillTrainer(
+            teacher=teacher_model,
+            hardness=training_args.teacher_ratio,
+            temperature=training_args.distill_temp,
+            model=model,
+            args=training_args,
+            train_dataset=train_dataset if training_args.do_train else None,
+            eval_dataset=eval_dataset if training_args.do_eval else None,
+            compute_metrics=compute_metrics,
+            tokenizer=tokenizer,
+            data_collator=data_collator,
+            compression_ctrl=compression_ctrl
+        )
+    else:
+        # Initialize our Trainer
+        trainer = Trainer(
+            model=model,
+            args=training_args,
+            train_dataset=train_dataset if training_args.do_train else None,
+            eval_dataset=eval_dataset if training_args.do_eval else None,
+            compute_metrics=compute_metrics,
+            tokenizer=tokenizer,
+            data_collator=data_collator,
+            compression_ctrl=compression_ctrl
+        )
 
     if nncf_config is not None:
         if not (training_args.local_rank == -1 or training_args.no_cuda):

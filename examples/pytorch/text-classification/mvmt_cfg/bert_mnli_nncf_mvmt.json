@@ -1,0 +1,56 @@
+{
+    "input_info": [
+        {
+            "sample_size": [1, 128],
+            "type": "long"
+        },
+        {
+            "sample_size": [1, 128],
+            "type": "long"
+        },
+        {
+            "sample_size": [1, 128],
+            "type": "long"
+        }
+    ],
+    "compression": {
+        "algorithm": "movement_sparsity",
+        "params": {
+            "schedule": "threshold_polynomial_decay",
+            "power": 3,
+            "init_importance_threshold": 0.0,
+            "final_importance_threshold": 0.1,
+            "warmup_start_epoch": 1,
+            "warmup_end_epoch": 5,
+            "steps_per_epoch": 12272,
+            "importance_regularization_factor": 0.005,
+            "update_per_optimizer_step": true,
+        },
+        "sparse_structure_by_scopes": [
+            ["block", [32, 32], "{re}.*BertAttention*"],
+            ["per_dim", [0], "{re}.*BertIntermediate*"],
+            ["per_dim", [1], "{re}.*BertOutput*"]
+        ],
+        "ignored_scopes": ["{re}.*NNCFEmbedding", "{re}.*classifier*", "{re}.*pooler*"]
+    },
+    // "compression": {
+    //     "algorithm": "quantization",
+    //     "initializer": {
+    //         "range": {
+    //             "num_init_samples": 96
+    //         }
+    //     },
+    //     "ignored_scopes": ["{re}BertSelfAttention\\[self\\]/__add___0",
+    //         "{re}BertIntermediate\\[intermediate\\]/__mul___0",
+    //         "{re}BertIntermediate\\[intermediate\\]/NNCFLinear\\[dense\\]/linear_0"
+    //     ],
+    //     "activations":
+    //     {
+    //         "mode": "asymmetric"
+    //     },
+    //     "weights":
+    //     {
+    //         "mode": "symmetric"
+    //     }
+    // }
+}
