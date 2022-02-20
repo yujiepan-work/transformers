@@ -1337,6 +1337,8 @@ class Trainer:
                     # print("_steps_in_current_epoch:", self.compression_ctrl.scheduler._steps_in_current_epoch)
                     # print("current_importance_threshold:", self.compression_ctrl.scheduler.current_importance_threshold)
                     curr_loss = self.training_step(model, inputs)
+                    # with open("stats_{:03}.txt".format(self.compression_ctrl.scheduler.current_step), "w") as f:
+                    #     f.write(self.compression_ctrl.statistics().to_str())
 
                 tr_loss += curr_loss
                 self.current_flos += float(self.floating_point_ops(inputs))

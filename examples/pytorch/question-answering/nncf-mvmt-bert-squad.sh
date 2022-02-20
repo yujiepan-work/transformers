@@ -10,10 +10,11 @@ export WANDB_PROJECT="nncf-mvmt-squad ($(hostname))"
 export CUDA_VISIBLE_DEVICES=0
 
 NEPOCH=20
-
-RUNID=run27-bert-squad-nncf-mvmt-bt-${NEPOCH}eph-r0.02-threshold-end-10eph
-OUTROOT=/data1/vchua/run/ssbs-feb/bert-squad
-WORKDIR=/data1/vchua/dev/ssbs-feb/transformers/examples/pytorch/question-answering
+# NEPOCH=4
+RUNID=run27-bert-squad-nncf-mvmt-bt-${NEPOCH}eph-r0.02-threshold-end-3eph-prune-bias
+# RUNID=run27-bert-squad-nncf-mvmt-bt-${NEPOCH}eph-r0.005-threshold-end-3eph-functest
+OUTROOT=/data2/vchua/run/ssbs-feb/bert-squad
+WORKDIR=/data2/vchua/dev/ssbs-feb/transformers/examples/pytorch/question-answering
 
 CONDAROOT=/data1/vchua/miniconda3
 CONDAENV=ssbs-feb
@@ -46,13 +47,14 @@ python run_qa.py \
     --per_device_train_batch_size 16 \
     --max_seq_length 384 \
     --doc_stride 128 \
+    --nncf_config mvmt_cfg/ref_bert_squad_nncf_mvmt.json \
     --save_steps 2500 \
-    --nncf_config bert_squad_nncf_mvmt.json \
     --logging_steps 1 \
     --overwrite_output_dir \
     --run_name $RUNID \
     --output_dir $OUTDIR
 "
+    # --nncf_config mvmt_cfg/functest-bert_squad_nncf_mvmt.json \
 
 if [[ $1 == "local" ]]; then
     echo "${cmd}" > $OUTDIR/run.log
@@ -79,4 +81,4 @@ fi
 # --warmup_ratio 0.05 \
 
     # --optimize_model_before_eval  \
-    # --optimized_checkpoint /data1/vchua/tld-poc/bert-base-squadv1-local-hybrid-filled-lt-compiled  \
+    # --optimized_checkpoint /data2/vchua/tld-poc/bert-base-squadv1-local-hybrid-filled-lt-compiled  \
