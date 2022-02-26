@@ -1813,6 +1813,8 @@ PreTrainedModel.push_to_hub.__doc__ = PreTrainedModel.push_to_hub.__doc__.format
 )
 
 
+import nncf
+@nncf.torch.register_module()
 class Conv1D(nn.Module):
     """
     1D-convolutional layer as defined by Radford et al. for OpenAI GPT (and also used in GPT-2).

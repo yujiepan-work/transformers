@@ -31,6 +31,10 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
 
+
+from nncf.torch.nncf_network import NNCFNetwork
+from nncf.torch import create_compressed_model
+from optimum.intel.nncf import NNCFAutoConfig
 from tqdm.auto import tqdm
 
 
@@ -50,6 +54,7 @@ from .integrations import (  # isort: split
 
 import numpy as np
 import torch
+from nncf.common.utils.tensorboard import prepare_for_tensorboard
 from packaging import version
 from torch import nn
 from torch.utils.data import DataLoader, Dataset, IterableDataset, RandomSampler, SequentialSampler
@@ -284,12 +289,26 @@ class Trainer:
         compute_metrics: Optional[Callable[[EvalPrediction], Dict]] = None,
         callbacks: Optional[List[TrainerCallback]] = None,
         optimizers: Tuple[torch.optim.Optimizer, torch.optim.lr_scheduler.LambdaLR] = (None, None),
+        nncf_config: NNCFAutoConfig = None,
     ):
         if args is None:
             output_dir = "tmp_trainer"
             logger.info(f"No `TrainingArguments` passed, using `output_dir={output_dir}`.")
             args = TrainingArguments(output_dir=output_dir)
         self.args = args
+
+        if nncf_config is not None:
+            nncf_config.auto_register_extra_structs(args, train_dataset, data_collator)
+            # TODO: restore compression state
+            # compression_state_file = os.path.join(model_name_or_path, NNCF_PT_STATE_NAME)
+            # if os.path.isfile(compression_state_file):
+            #     compression_state = torch.load(compression_state_file)
+            # else:
+            compression_state = None
+            self.compression_ctrl, model = create_compressed_model(
+                model, nncf_config, compression_state=compression_state
+            )
+
         # Seed must be set before instantiating the model when using model
         set_seed(self.args.seed)
         self.hp_name = None
@@ -542,7 +561,12 @@ class Trainer:
             return dataset
         if self._signature_columns is None:
             # Inspect model forward signature to keep only the arguments it accepts.
-            signature = inspect.signature(self.model.forward)
+
+            if isinstance(self.model, NNCFNetwork):
+                signature = inspect.signature(self.model.get_nncf_wrapped_model().forward)
+            else:
+                signature = inspect.signature(self.model.forward)
+
             self._signature_columns = list(signature.parameters.keys())
             # Labels may be named label or label_ids, the default data collator handles that.
             self._signature_columns += ["label", "label_ids"]
@@ -1048,6 +1072,10 @@ class Trainer:
 
             if self.args.ddp_bucket_cap_mb is not None:
                 kwargs["bucket_cap_mb"] = self.args.ddp_bucket_cap_mb
+            
+            if self.compression_ctrl is not None:
+                self.compression_ctrl.distributed()
+
             model = nn.parallel.DistributedDataParallel(
                 model,
                 device_ids=[self.args.local_rank] if self.args._n_gpu != 0 else None,
@@ -1315,6 +1343,10 @@ class Trainer:
                     break
 
         for epoch in range(epochs_trained, num_train_epochs):
+            if self.compression_ctrl is not None:
+                self.compression_ctrl.scheduler.epoch_step()
+                print(self.compression_ctrl.statistics().to_str())
+
             if isinstance(train_dataloader, DataLoader) and isinstance(train_dataloader.sampler, DistributedSampler):
                 train_dataloader.sampler.set_epoch(epoch)
             elif isinstance(train_dataloader.dataset, IterableDatasetShard):
@@ -1370,10 +1402,10 @@ class Trainer:
                     and (torch.isnan(tr_loss_step) or torch.isinf(tr_loss_step))
                 ):
                     # if loss is nan or inf simply add the average of previous logged losses
-                    tr_loss += tr_loss / (1 + self.state.global_step - self._globalstep_last_logged)
-                else:
-                    tr_loss += tr_loss_step
-
+                    curr_loss = tr_loss / (1 + self.state.global_step - self._globalstep_last_logged)
+                else:  # Comment to fix patching
+                    curr_loss = tr_loss_step
+                tr_loss += curr_loss
                 self.current_flos += float(self.floating_point_ops(inputs))
 
                 # Optimizer step for deepspeed must be called on every step regardless of the value of gradient_accumulation_steps
@@ -1411,6 +1443,9 @@ class Trainer:
                             )
 
                     # Optimizer step
+                    if self.compression_ctrl is not None:
+                        self.compression_ctrl.scheduler.step()
+
                     optimizer_was_run = True
                     if self.deepspeed:
                         pass  # called outside the loop
@@ -1435,6 +1470,7 @@ class Trainer:
                     model.zero_grad()
                     self.state.global_step += 1
                     self.state.epoch = epoch + (step + 1) / steps_in_epoch
+                    self.state.curr_loss = curr_loss.cpu().detach().item()
                     self.control = self.callback_handler.on_step_end(args, self.state, self.control)
 
                     self._maybe_log_save_evaluate(tr_loss, model, trial, epoch, ignore_keys_for_eval)
@@ -1553,6 +1589,13 @@ class Trainer:
 
             logs["loss"] = round(tr_loss_scalar / (self.state.global_step - self._globalstep_last_logged), 4)
             logs["learning_rate"] = self._get_learning_rate()
+
+            if self.compression_ctrl is not None:
+                logs["compression_loss"] = self.compression_ctrl.loss().item()
+                compression_stats = self.compression_ctrl.statistics()
+                for key, value in prepare_for_tensorboard(compression_stats).items():
+                    logs["compression/statistics/{0}".format(key)] = value
+                # print(compression_stats.to_str())
 
             self._total_loss_scalar += tr_loss_scalar
             self._globalstep_last_logged = self.state.global_step
@@ -1945,6 +1988,9 @@ class Trainer:
         if self.args.gradient_accumulation_steps > 1 and not self.deepspeed:
             # deepspeed handles loss scaling by gradient_accumulation_steps in its `backward`
             loss = loss / self.args.gradient_accumulation_steps
+        if self.compression_ctrl is not None:
+            compression_loss = self.compression_ctrl.loss()
+            loss += compression_loss
 
         if self.do_grad_scaling:
             self.scaler.scale(loss).backward()
@@ -2055,34 +2101,6 @@ class Trainer:
         if self.args.push_to_hub and not _internal_call:
             self.push_to_hub(commit_message="Model save")
 
-    def _save_tpu(self, output_dir: Optional[str] = None):
-        output_dir = output_dir if output_dir is not None else self.args.output_dir
-        logger.info(f"Saving model checkpoint to {output_dir}")
-
-        if xm.is_master_ordinal():
-            os.makedirs(output_dir, exist_ok=True)
-            torch.save(self.args, os.path.join(output_dir, TRAINING_ARGS_NAME))
-
-        # Save a trained model and configuration using `save_pretrained()`.
-        # They can then be reloaded using `from_pretrained()`
-        xm.rendezvous("saving_checkpoint")
-        if not isinstance(self.model, PreTrainedModel):
-            if isinstance(unwrap_model(self.model), PreTrainedModel):
-                unwrap_model(self.model).save_pretrained(
-                    output_dir,
-                    save_config=self.args.should_save,
-                    state_dict=self.model.state_dict(),
-                    save_function=xm.save,
-                )
-            else:
-                logger.info("Trainer.model is not a `PreTrainedModel`, only saving its state dict.")
-                state_dict = self.model.state_dict()
-                xm.save(state_dict, os.path.join(output_dir, WEIGHTS_NAME))
-        else:
-            self.model.save_pretrained(output_dir, save_config=self.args.should_save, save_function=xm.save)
-        if self.tokenizer is not None and self.args.should_save:
-            self.tokenizer.save_pretrained(output_dir)
-
     def _save(self, output_dir: Optional[str] = None, state_dict=None):
         # If we are executing this function, we are the process zero, so we don't check for that.
         output_dir = output_dir if output_dir is not None else self.args.output_dir
@@ -2091,10 +2109,15 @@ class Trainer:
         # Save a trained model and configuration using `save_pretrained()`.
         # They can then be reloaded using `from_pretrained()`
         if not isinstance(self.model, PreTrainedModel):
-            if isinstance(unwrap_model(self.model), PreTrainedModel):
-                if state_dict is None:
-                    state_dict = self.model.state_dict()
-                unwrap_model(self.model).save_pretrained(output_dir, state_dict=state_dict)
+            unwrapped_model = unwrap_model(self.model)
+            if isinstance(unwrapped_model, NNCFNetwork):
+                is_pretrained = isinstance(unwrapped_model.get_nncf_wrapped_model(), PreTrainedModel)
+            else:
+                is_pretrained = isinstance(unwrapped_model, PreTrainedModel)
+            if is_pretrained:
+                if state_dict is None:  # Just a comment line to fix patching
+                    state_dict = unwrapped_model.state_dict()
+                unwrapped_model.save_pretrained(output_dir, state_dict=state_dict)
             else:
                 logger.info("Trainer.model is not a `PreTrainedModel`, only saving its state dict.")
                 if state_dict is None:
@@ -2107,6 +2130,15 @@ class Trainer:
 
         # Good practice: save your training arguments together with the trained model
         torch.save(self.args, os.path.join(output_dir, TRAINING_ARGS_NAME))
+
+        # path_to_onnx = os.path.join(output_dir, "ov_model.onnx")
+        # self.compression_ctrl.export_model(path_to_onnx, input_names=["input_ids", "attention_mask"])
+
+        # import subprocess
+
+        # subprocess.run(
+        #     [sys.executable, "-m", "mo", "--input_model", path_to_onnx, "--output_dir", output_dir], check=True
+        # )
 
     def store_flos(self):
         # Storing the number of floating-point operations that went into the model
