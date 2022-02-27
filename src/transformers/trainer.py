@@ -290,12 +290,19 @@ class Trainer:
         callbacks: Optional[List[TrainerCallback]] = None,
         optimizers: Tuple[torch.optim.Optimizer, torch.optim.lr_scheduler.LambdaLR] = (None, None),
         nncf_config: NNCFAutoConfig = None,
+        compression_ctrl = None,
     ):
         if args is None:
             output_dir = "tmp_trainer"
             logger.info(f"No `TrainingArguments` passed, using `output_dir={output_dir}`.")
             args = TrainingArguments(output_dir=output_dir)
         self.args = args
+
+        if nncf_config is not None and compression_ctrl is not None:
+            raise ValueError("nncf_config and compression_ctrl must be mutually exclusive")
+        
+        if compression_ctrl is not None:
+            self.compression_ctrl = compression_ctrl
 
         if nncf_config is not None:
             nncf_config.auto_register_extra_structs(args, train_dataset, data_collator)

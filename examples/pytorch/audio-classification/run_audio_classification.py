@@ -41,7 +41,8 @@ from transformers import (
 from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version
 from transformers.utils.versions import require_version
-
+from nncf.torch import create_compressed_model
+from distill_trainer import AudioClassificationDistiller
 
 logger = logging.getLogger(__name__)
 
@@ -349,16 +350,46 @@ def main():
         import shutil
         shutil.copy(training_args.nncf_config, training_args.output_dir)
 
-    # Initialize our trainer
-    trainer = Trainer(
-        model=model,
-        args=training_args,
-        train_dataset=raw_datasets["train"] if training_args.do_train else None,
-        eval_dataset=raw_datasets["eval"] if training_args.do_eval else None,
-        compute_metrics=compute_metrics,
-        tokenizer=feature_extractor,
-        nncf_config=nncf_config if training_args.nncf_config is not None else None,
-    )
+        nncf_config.auto_register_extra_structs(training_args, raw_datasets["train"], None)
+        compression_state = None
+        compression_ctrl, model = create_compressed_model(
+            model, nncf_config, compression_state=compression_state
+        )
+
+    teacher_model = None
+    if training_args.teacher is not None:
+        teacher_model = AutoModelForAudioClassification.from_pretrained(
+            training_args.teacher,
+            from_tf=bool(".ckpt" in training_args.teacher),
+            cache_dir=model_args.cache_dir,
+        )
+
+    if teacher_model is not None:
+        # Initialize our Trainer
+        trainer = AudioClassificationDistiller(
+            teacher=teacher_model,
+            hardness=training_args.teacher_ratio,
+            temperature=training_args.distill_temp,
+            model=model,
+            args=training_args,
+            train_dataset=raw_datasets["train"] if training_args.do_train else None,
+            eval_dataset=raw_datasets["eval"] if training_args.do_eval else None,
+            compute_metrics=compute_metrics,
+            tokenizer=feature_extractor,
+            compression_ctrl=compression_ctrl
+        )
+    else:
+        # Initialize our trainer
+        trainer = Trainer(
+            model=model,
+            args=training_args,
+            train_dataset=raw_datasets["train"] if training_args.do_train else None,
+            eval_dataset=raw_datasets["eval"] if training_args.do_eval else None,
+            compute_metrics=compute_metrics,
+            tokenizer=feature_extractor,
+            nncf_config=None,
+            compression_ctrl=compression_ctrl
+        )
 
     # Training
     if training_args.do_train:

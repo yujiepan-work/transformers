@@ -44,11 +44,11 @@
                 "per_channel": false
             }    
         },
-        {
-            "algorithm": "knowledge_distillation",
-            "type": "softmax",
-            "scale": 9,
-            "temperature": 2,
-        }
+        // {
+        //     "algorithm": "knowledge_distillation",
+        //     "type": "softmax",
+        //     "scale": 9,
+        //     "temperature": 2,
+        // }
     ]
 }

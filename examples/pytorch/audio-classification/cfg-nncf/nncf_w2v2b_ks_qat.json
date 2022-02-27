@@ -46,11 +46,11 @@
                 "per_channel": false
             }  
         },
-        {
-            "algorithm": "knowledge_distillation",
-            "type": "softmax",
-            "scale": 2,
-            "temperature": 2
-        }
+        // {
+        //     "algorithm": "knowledge_distillation",
+        //     "type": "softmax",
+        //     "scale": 2,
+        //     "temperature": 2
+        // }
     ]
 }
