@@ -346,6 +346,8 @@ def main():
 
     if training_args.nncf_config is not None:
         nncf_config = NNCFAutoConfig.from_json(training_args.nncf_config)
+        import shutil
+        shutil.copy(training_args.nncf_config, training_args.output_dir)
 
     # Initialize our trainer
     trainer = Trainer(

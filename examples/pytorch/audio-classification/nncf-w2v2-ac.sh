@@ -10,8 +10,9 @@ export WANDB_PROJECT="w2v2opt-ks ($(hostname))"
 export CUDA_VISIBLE_DEVICES=0
 
 NEPOCH=5
-RUNID=run10-w2v2b-ks-qat-${NEPOCH}eph-baseline
-NNCFCFG=/data/vchua/dev/optimum-ov/optimum-openvino/optimum/intel/nncf/configs/nncf_wav2vec2_config.json
+# RUNID=run10-w2v2b-ks-qat-${NEPOCH}eph-baseline
+RUNID=run11-w2v2b-ks-qat-${NEPOCH}eph-symm-act-signed-per-chl-w-ignoreFE-kd-T2-scale2
+NNCFCFG=/data/vchua/dev/optimum-ov/transformers/examples/pytorch/audio-classification/cfg-nncf/nncf_w2v2b_ks_qat.json
 
 OUTROOT=/data/vchua/run/optimum-ov/w2v2b-ks
 WORKDIR=/data/vchua/dev/optimum-ov/transformers/examples/pytorch/audio-classification
@@ -53,15 +54,15 @@ python run_audio_classification.py \
     --logging_steps 1 \
     --evaluation_strategy steps \
     --eval_steps 100 \
-    --save_steps 250 \
+    --save_steps 200 \
     --load_best_model_at_end True \
     --metric_for_best_model accuracy \
-    --save_total_limit 3 \
     --seed 0 \
     --run_name $RUNID \
     --output_dir $OUTDIR \
     --overwrite_output_dir
 "
+    # --save_total_limit 3 \
 
 if [[ $1 == "local" ]]; then
     echo "${cmd}" > $OUTDIR/run.log
