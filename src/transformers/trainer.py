@@ -17,6 +17,7 @@ The Trainer class, to easily train a 🤗 Transformers from scratch or finetune 
 """
 
 import collections
+from copy import deepcopy
 import inspect
 import math
 import os
@@ -1279,6 +1280,9 @@ class Trainer:
                 for _ in train_dataloader:
                     break
 
+        hasfilled = False
+        loaded = False
+        cnt=0
         for epoch in range(epochs_trained, num_train_epochs):
             if self.compression_ctrl is not None:
                 self.compression_ctrl.scheduler.epoch_step()
@@ -1339,6 +1343,8 @@ class Trainer:
                     curr_loss = self.training_step(model, inputs)
                     # with open("stats_{:03}.txt".format(self.compression_ctrl.scheduler.current_step), "w") as f:
                     #     f.write(self.compression_ctrl.statistics().to_str())
+                    # with open("stats_{:03}.txt".format(self.compression_ctrl.child_ctrls[0].scheduler.current_step), "w") as f:
+                    #     f.write(self.compression_ctrl.child_ctrls[0].statistics().to_str())
 
                 tr_loss += curr_loss
                 self.current_flos += float(self.floating_point_ops(inputs))
@@ -1372,10 +1378,49 @@ class Trainer:
                                 amp.master_params(self.optimizer) if self.use_apex else model.parameters(),
                                 args.max_grad_norm,
                             )
-
+                    
                     # Optimizer step
                     if self.compression_ctrl is not None:
+                        # if self.compression_ctrl.scheduler.current_step+2 >= self.compression_ctrl.scheduler.warmup_end_epoch * self.compression_ctrl.scheduler._steps_per_epoch:
+                        #     if loaded is False:
+                        #         # ckptpth = '/data2/vchua/run/feb-topt/bert-squad/run27-bert-squad-nncf-mvmt-bt-20eph-r0.02-threshold-end-3eph-prune-bias-prefilled/checkpoint-57500/pytorch_model.bin'
+                        #         ckptpth = '/data2/vchua/run/feb-topt/bert-squad/run27.fri-bert-squad-nncf-mvmt-lt-20eph-r0.02-threshold-end-3eph-prune-bias-filled/checkpoint-40000/pytorch_model.bin'
+                        #         model.load_state_dict(torch.load(ckptpth))
+                        #         loaded = True
+                        #         print("loading ckpt")
+                        # # checkpoint_folder = f"{PREFIX_CHECKPOINT_DIR}-{self.state.global_step}"
+                        # full_ckpt_path = os.path.join(self.args.output_dir, checkpoint_folder)
+                        # os.makedirs(full_ckpt_path, exist_ok=True)
+                        if hasfilled is False:
+                            if hasattr(self.compression_ctrl, "child_ctrls"):
+                                mvmt_ctrl = self.compression_ctrl.child_ctrls[0]
+                            else:
+                                mvmt_ctrl = self.compression_ctrl
+
+                            if mvmt_ctrl.__class__.__name__ == 'MovementSparsityController':
+                                if mvmt_ctrl.scheduler.current_step+1 >= mvmt_ctrl.scheduler.warmup_end_epoch * mvmt_ctrl.scheduler._steps_per_epoch:
+                                    mvmt_ctrl.reset_independent_structured_mask()
+                                    mvmt_ctrl.resolve_structured_mask()
+                                    mvmt_ctrl.populate_structured_mask()
+                                    
+                                    # if cnt==2:
+                                    #     final_smi = deepcopy(mvmt_ctrl.sparsified_module_info)
+                                    #     cnt+=1
+                                    # if cnt==1:
+                                    #     next_smi = deepcopy(mvmt_ctrl.sparsified_module_info)
+                                    #     cnt+=1
+                                    # if cnt==0:
+                                    #     saved_smi = deepcopy(mvmt_ctrl.sparsified_module_info)
+                                    #     cnt+=1
+                                    checkpoint_folder = f"{PREFIX_CHECKPOINT_DIR}-{self.state.global_step}"
+                                    full_ckpt_path = os.path.join(self.args.output_dir, checkpoint_folder)
+                                    os.makedirs(full_ckpt_path, exist_ok=True)
+                                    # onnx_pth = os.path.join(full_ckpt_path, "{}.onnx".format(model.__class__.__name__))
+                                    # mvmt_ctrl.report_structured_sparsity(full_ckpt_path)
+                                    # self.compression_ctrl.export_model(onnx_pth)
+                                    hasfilled = True
                         self.compression_ctrl.scheduler.step()
+
                     optimizer_was_run = True
                     if self.deepspeed:
                         pass  # called outside the loop

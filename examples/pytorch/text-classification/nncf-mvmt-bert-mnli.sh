@@ -12,9 +12,10 @@ export CUDA_VISIBLE_DEVICES=0
 NEPOCH=12
 
 # RUNID=run00-bert-mnli-mvmt-customkd-bt-${NEPOCH}eph
-RUNID=run65-bert-mnli-nncf-mvmt-bt-${NEPOCH}eph-r0.005-threshold-end-5eph-exclude-pooler-regression
-OUTROOT=/data1/vchua/run/ssbs-feb/bert-mnli
-WORKDIR=/data1/vchua/dev/ssbs-feb/transformers/examples/pytorch/text-classification
+# RUNID=run70-bert-mnli-nncf-mvmt-bt-${NEPOCH}eph-r0.005-threshold-end-5eph-filled
+RUNID=run80-bert-mnli-nncf-mvmt-8bit-bt-${NEPOCH}eph-r0.005-threshold-end-5eph-filled
+OUTROOT=/data2/vchua/run/ssbs-feb/bert-mnli
+WORKDIR=/data2/vchua/dev/ssbs-feb/transformers/examples/pytorch/text-classification
 
 CONDAROOT=/data1/vchua/miniconda3
 CONDAENV=ssbs-feb

@@ -603,7 +603,8 @@ def main():
     else:
         compression_ctrl, model = retval
 
-    if training_args.to_onnx:
+    GEN_ONNX_AT_END = True
+    if training_args.to_onnx and GEN_ONNX_AT_END is False:
     # Expecting the following forward signature:
     # (input_ids, attention_mask, token_type_ids, ...)
         if nncf_config is not None:
@@ -664,6 +665,60 @@ def main():
         trainer.log_metrics("train", metrics)
         trainer.save_metrics("train", metrics)
         trainer.save_state()
+
+    # compression_ctrl.create_structured_sparsity_context()
+    # compression_ctrl.resolve_structured_mask()
+    # compression_ctrl.reset_independent_structured_mask()
+    # compression_ctrl.populate_structured_mask()
+
+    # --onnx_export---------
+    preonnx_dev = next(trainer.model.parameters()).device
+    if training_args.to_onnx and GEN_ONNX_AT_END is True:
+    # Expecting the following forward signature:
+    # (input_ids, attention_mask, token_type_ids, ...)
+        onnx_pth = "{}.onnx".format(trainer.model.__class__.__name__)
+        if training_args.output_dir is not None:
+            onnx_pth = os.path.join(training_args.output_dir, onnx_pth)
+
+        if nncf_config is not None:
+            is_quantized=False
+            # Burn-in zero mask on weights 
+            if hasattr(compression_ctrl, 'child_ctrls'):
+                for ctrl in compression_ctrl.child_ctrls:
+                    if ctrl.__class__.__name__ == 'QuantizationController':
+                        is_quantized=True
+
+            compression_ctrl.export_model(onnx_pth)
+        
+            from reporter.bert_onnx_mapper import bert_onnx_mapper
+            from reporter.sparsity_reporter import SparsityReporter
+            if is_quantized is True:
+                # Sparsity reporting for generated onnx -------------------    
+                onnx_mapper = bert_onnx_mapper(onnx_pth, variant='nncf-quantized')
+                if onnx_mapper.quantized_tensor_nodes is not None:
+                    onnx_df = SparsityReporter.per_item_sparsity(onnx_mapper.quantized_tensor_nodes)
+            else:
+                onnx_mapper = bert_onnx_mapper(onnx_pth, variant='nncf-sparsified')
+                if onnx_mapper.tensor_nodes is not None:
+                    onnx_df = SparsityReporter.per_item_sparsity(onnx_mapper.tensor_nodes)
+
+            if training_args.output_dir is not None:
+                csvpath = os.path.join(training_args.output_dir, "{}_onnx_sparsity.csv".format(trainer.model.__class__.__name__))
+                onnx_df.to_csv(csvpath, index=True)
+                with open(os.path.splitext(csvpath)[0]+'.md', 'w') as f:
+                    onnx_df.to_markdown(f)
+            # End of Sparsity reporting for generated onnx -------------------
+        else:
+            model.to('cpu')
+            dummy_tensor = torch.ones([1, 384], dtype=torch.long)
+            onnx.export(model, 
+                        (dummy_tensor, dummy_tensor, dummy_tensor), 
+                        training_args.to_onnx, 
+                        enable_onnx_checker=True,
+                        opset_version=10,
+                        # Do not fuse Conv+BN in ONNX. May cause dropout elements to appear in ONNX.
+                        training=True)
+        model.to(preonnx_dev)
 
     # Evaluation
     if training_args.do_eval:

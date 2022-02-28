@@ -9,10 +9,18 @@ export WANDB_API_KEY=f8a95080288950342f1695008cd8256adc3b0778
 export WANDB_PROJECT="nncf-mvmt-squad ($(hostname))"
 export CUDA_VISIBLE_DEVICES=0
 
-NEPOCH=20
+# NEPOCH=20
+# RUNID=run27.sat-bert-squad-nncf-mvmt-lt-${NEPOCH}eph-r0.02-threshold-end-3eph-prune-bias-filled
+# NNCFCFG=mvmt_cfg/ref_bert_squad_nncf_mvmt.json
+
 # NEPOCH=4
-RUNID=run27-bert-squad-nncf-mvmt-bt-${NEPOCH}eph-r0.02-threshold-end-3eph-prune-bias
-# RUNID=run27-bert-squad-nncf-mvmt-bt-${NEPOCH}eph-r0.005-threshold-end-3eph-functest
+# RUNID=run32.fri-bert-squad-nncf-mvmt-lt-${NEPOCH}eph-r0.005-threshold-end-3eph-functest-prune-bias-filled
+# NNCFCFG=mvmt_cfg/functest-bert_squad_nncf_mvmt.json
+
+NEPOCH=20
+RUNID=run27.sun-bert-squad-nncf-mvmt-8bit-lt-${NEPOCH}eph-r0.02-threshold-end-10eph-prune-bias-prefilled
+NNCFCFG=mvmt_cfg/8bit_ref_bert_squad_nncf_mvmt.json
+
 OUTROOT=/data2/vchua/run/ssbs-feb/bert-squad
 WORKDIR=/data2/vchua/dev/ssbs-feb/transformers/examples/pytorch/question-answering
 
@@ -47,14 +55,13 @@ python run_qa.py \
     --per_device_train_batch_size 16 \
     --max_seq_length 384 \
     --doc_stride 128 \
-    --nncf_config mvmt_cfg/ref_bert_squad_nncf_mvmt.json \
+    --nncf_config $NNCFCFG \
     --save_steps 2500 \
     --logging_steps 1 \
     --overwrite_output_dir \
     --run_name $RUNID \
     --output_dir $OUTDIR
 "
-    # --nncf_config mvmt_cfg/functest-bert_squad_nncf_mvmt.json \
 
 if [[ $1 == "local" ]]; then
     echo "${cmd}" > $OUTDIR/run.log
