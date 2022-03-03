@@ -9,10 +9,13 @@ export WANDB_API_KEY=f8a95080288950342f1695008cd8256adc3b0778
 export WANDB_PROJECT="w2v2opt-ks ($(hostname))"
 export CUDA_VISIBLE_DEVICES=0
 
-NEPOCH=20
-# RUNID=run10-w2v2b-ks-qat-${NEPOCH}eph-baseline
-RUNID=run12a-w2v2b-ks-qat-${NEPOCH}eph-symm-act-signed-per-chl-w-ignoreFE
-NNCFCFG=/data/vchua/dev/optimum-ov/transformers/examples/pytorch/audio-classification/cfg-nncf/nncf_w2v2b_ks_qat.json
+NEPOCH=30
+RUNID=run10.2-w2v2b-ks-qat-${NEPOCH}eph-baseline
+NNCFCFG=/data/vchua/dev/optimum-ov/optimum-openvino/optimum/intel/nncf/configs/nncf_wav2vec2_config.json
+
+# RUNID=run12b-w2v2b-ks-qat-${NEPOCH}eph-symm-act-signed-per-chl-w-ignoreFE
+# RUNID=run23-w2v2b-ks-qat-${NEPOCH}eph-symm-act-signed-per-chl-w-ignoreFE-customkd-bt-tratio0.9
+# NNCFCFG=/data/vchua/dev/optimum-ov/transformers/examples/pytorch/audio-classification/cfg-nncf/nncf_w2v2b_ks_qat.json
 
 OUTROOT=/data/vchua/run/optimum-ov/w2v2b-ks
 WORKDIR=/data/vchua/dev/optimum-ov/transformers/examples/pytorch/audio-classification
@@ -31,9 +34,10 @@ fi
 
 mkdir -p $OUTDIR
 cd $WORKDIR
+    # --distill_temp 5 \
+    # --lr_scheduler_type cosine_with_restarts \
     # --teacher anton-l/wav2vec2-base-ft-keyword-spotting \
     # --teacher_ratio 0.9 \
-    # --distill_temp 5 \
 
 cmd="
 python run_audio_classification.py \
