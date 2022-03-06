@@ -345,6 +345,7 @@ def main():
         # Set the validation transforms
         raw_datasets["eval"].set_transform(val_transforms, output_all_columns=False)
 
+    compression_ctrl = None
     if training_args.nncf_config is not None:
         nncf_config = NNCFAutoConfig.from_json(training_args.nncf_config)
         import shutil
@@ -363,6 +364,9 @@ def main():
             from_tf=bool(".ckpt" in training_args.teacher),
             cache_dir=model_args.cache_dir,
         )
+
+    g = model.get_graph()
+    g.dump_human_readable_graph(model, "w2v2_prune")
 
     if teacher_model is not None:
         # Initialize our Trainer
@@ -391,6 +395,8 @@ def main():
             compression_ctrl=compression_ctrl
         )
 
+    # import torch
+    # trainer.model.load_state_dict(torch.load("/data/vchua/run/optimum-ov/w2v2b-ks/nncf-mvmt/run30-w2v2b-ks-mvmt-bt-10eph-start1-stop4-r0.04/checkpoint-1400/pytorch_model.bin"))
     # Training
     if training_args.do_train:
         checkpoint = None

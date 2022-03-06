@@ -842,15 +842,28 @@ class Trainer:
         Trainer's init through `optimizers`, or subclass and override this method in a subclass.
         """
         if self.optimizer is None:
+            score_params = []
+            for n, p in self.model.named_parameters():
+                if not p.requires_grad:
+                    continue
+                if "importance" in n:
+                    score_params.append(p)
+
             decay_parameters = get_parameter_names(self.model, [nn.LayerNorm])
             decay_parameters = [name for name in decay_parameters if "bias" not in name]
+            decay_parameters = [name for name in decay_parameters if "importance" not in name]
             optimizer_grouped_parameters = [
+                {
+                    "params": score_params,
+                    "weight_decay": 0.0,
+                    "lr": 0.01
+                },
                 {
                     "params": [p for n, p in self.model.named_parameters() if n in decay_parameters],
                     "weight_decay": self.args.weight_decay,
                 },
                 {
-                    "params": [p for n, p in self.model.named_parameters() if n not in decay_parameters],
+                    "params": [p for n, p in self.model.named_parameters() if n not in decay_parameters and 'importance' not in n],
                     "weight_decay": 0.0,
                 },
             ]
@@ -1349,10 +1362,11 @@ class Trainer:
                 for _ in train_dataloader:
                     break
 
+        hasfilled = False
         for epoch in range(epochs_trained, num_train_epochs):
             if self.compression_ctrl is not None:
                 self.compression_ctrl.scheduler.epoch_step()
-                print(self.compression_ctrl.statistics().to_str())
+                # print(self.compression_ctrl.statistics().to_str())
 
             if isinstance(train_dataloader, DataLoader) and isinstance(train_dataloader.sampler, DistributedSampler):
                 train_dataloader.sampler.set_epoch(epoch)
@@ -1451,6 +1465,54 @@ class Trainer:
 
                     # Optimizer step
                     if self.compression_ctrl is not None:
+                        # if self.compression_ctrl.scheduler.current_step+2 >= self.compression_ctrl.scheduler.warmup_end_epoch * self.compression_ctrl.scheduler._steps_per_epoch:
+                        #     if loaded is False:
+                        #         # ckptpth = '/data2/vchua/run/feb-topt/bert-squad/run27-bert-squad-nncf-mvmt-bt-20eph-r0.02-threshold-end-3eph-prune-bias-prefilled/checkpoint-57500/pytorch_model.bin'
+                        #         ckptpth = '/data2/vchua/run/feb-topt/bert-squad/run27.fri-bert-squad-nncf-mvmt-lt-20eph-r0.02-threshold-end-3eph-prune-bias-filled/checkpoint-40000/pytorch_model.bin'
+                        #         model.load_state_dict(torch.load(ckptpth))
+                        #         loaded = True
+                        #         print("loading ckpt")
+                        # # checkpoint_folder = f"{PREFIX_CHECKPOINT_DIR}-{self.state.global_step}"
+                        # full_ckpt_path = os.path.join(self.args.output_dir, checkpoint_folder)
+                        # os.makedirs(full_ckpt_path, exist_ok=True)
+                        if hasfilled is False:
+                            if hasattr(self.compression_ctrl, "child_ctrls"):
+                                mvmt_ctrl = self.compression_ctrl.child_ctrls[0]
+                            else:
+                                mvmt_ctrl = self.compression_ctrl
+
+                            if mvmt_ctrl.__class__.__name__ == 'MovementSparsityController':
+                                if mvmt_ctrl.scheduler.current_step+1 >= mvmt_ctrl.scheduler.warmup_end_epoch * mvmt_ctrl.scheduler._steps_per_epoch:
+                                    # mvmt_ctrl.report_structured_sparsity(os.path.join(self.args.output_dir, "1-pre"))
+                                    mvmt_ctrl.reset_independent_structured_mask()
+                                    # mvmt_ctrl.report_structured_sparsity(os.path.join(self.args.output_dir, "2-reset"))
+                                    
+                                    mvmt_ctrl.resolve_structured_mask()
+                                    pth = os.path.join(self.args.output_dir, "3-resolve")
+                                    os.makedirs(pth, exist_ok=True)
+                                    mvmt_ctrl.report_structured_sparsity(pth)
+
+                                    mvmt_ctrl.populate_structured_mask()
+                                    pth = os.path.join(self.args.output_dir, "4-pop")
+                                    os.makedirs(pth, exist_ok=True)
+                                    mvmt_ctrl.report_structured_sparsity(pth)
+                                    
+                                    # if cnt==2:
+                                    #     final_smi = deepcopy(mvmt_ctrl.sparsified_module_info)
+                                    #     cnt+=1
+                                    # if cnt==1:
+                                    #     next_smi = deepcopy(mvmt_ctrl.sparsified_module_info)
+                                    #     cnt+=1
+                                    # if cnt==0:
+                                    #     saved_smi = deepcopy(mvmt_ctrl.sparsified_module_info)
+                                    #     cnt+=1
+                                    checkpoint_folder = f"{PREFIX_CHECKPOINT_DIR}-{self.state.global_step}"
+                                    full_ckpt_path = os.path.join(self.args.output_dir, checkpoint_folder)
+                                    os.makedirs(full_ckpt_path, exist_ok=True)
+                                    # onnx_pth = os.path.join(full_ckpt_path, "{}.onnx".format(model.__class__.__name__))
+                                    # mvmt_ctrl.report_structured_sparsity(full_ckpt_path)
+                                    # self.compression_ctrl.export_model(onnx_pth)
+                                    hasfilled = True
                         self.compression_ctrl.scheduler.step()
 
                     optimizer_was_run = True

@@ -17,18 +17,19 @@
         "Wav2Vec2ForSequenceClassification/Wav2Vec2Model[wav2vec2]/Wav2Vec2Encoder[encoder]/Wav2Vec2PositionalConvEmbedding[pos_conv_embed]/NNCFConv1d[conv]/conv1d_0",
         "Wav2Vec2ForSequenceClassification/Wav2Vec2Model[wav2vec2]/Wav2Vec2FeatureProjection[feature_projection]/NNCFLinear[projection]/linear_0",
     ],
-    "compression": [
+    "compression": 
+    [
         {
             "algorithm": "movement_sparsity",
             "params": {
                 "schedule": "threshold_polynomial_decay",
                 "power": 3,
                 "init_importance_threshold": 0.0,
-                "final_importance_threshold": 3,
-                "warmup_start_epoch": 0,
-                "warmup_end_epoch": 0.01,
+                "final_importance_threshold": 0.1,
+                "warmup_start_epoch": 1,
+                "warmup_end_epoch": 6,
                 "steps_per_epoch": 399,
-                "importance_regularization_factor": 0.005,
+                "importance_regularization_factor": 0.10,
                 "update_per_optimizer_step": true,
             },
             "sparse_structure_by_scopes": [
@@ -47,15 +48,16 @@
         //     "initializer": {
         //         "range": {
         //             "num_init_samples": 32,
-        //         //     "type": "percentile",
-        //         //     "params":
-        //         //     {
-        //         //         "min_percentile": 0.01,
-        //         //         "max_percentile": 99.99
-        //         //     }
+        //             "type": "percentile",
+        //             "params":
+        //             {
+        //                 "min_percentile": 0.01,
+        //                 "max_percentile": 99.99
+        //             }
         //         },
+
         //         "batchnorm_adaptation": {
-        //             "num_bn_adaptation_samples": 20
+        //             "num_bn_adaptation_samples": 200
         //         }
         //     },
         //     "activations":
@@ -67,13 +69,13 @@
         //         "mode": "symmetric",
         //         "signed": true,
         //         "per_channel": false
-        //     }    
+        //     }  
         // },
         // {
         //     "algorithm": "knowledge_distillation",
         //     "type": "softmax",
-        //     "scale": 9,
-        //     "temperature": 2,
+        //     "scale": 2,
+        //     "temperature": 2
         // }
     ]
 }
