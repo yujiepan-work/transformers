@@ -2647,8 +2647,13 @@ class Trainer:
                         logits = outputs[1:]
                 else:
                     loss = None
-                    with self.autocast_smart_context_manager():
-                        outputs = model(**inputs)
+                    if hasattr(model, 'onnx_fwd_fn'):
+                        outputs = model.onnx_fwd_fn(inputs)
+                    elif hasattr(model, 'ie_fwd_fn'):
+                        outputs = model.ie_fwd_fn(inputs)
+                    else:
+                        with self.autocast_smart_context_manager():
+                            outputs = model(**inputs)
                     if isinstance(outputs, dict):
                         logits = tuple(v for k, v in outputs.items() if k not in ignore_keys)
                     else:

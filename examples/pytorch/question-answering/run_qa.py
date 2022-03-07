@@ -18,9 +18,11 @@ Fine-tuning the library models for question answering using a slightly adapted v
 """
 # You can also adapt this script on your own question answering task. Pointers for this are left as comments.
 
+import functools
 import logging
 import os
 import sys
+import torch
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -85,7 +87,14 @@ class ModelArguments:
             "with private models)."
         },
     )
-
+    eval_onnx: str = field(
+        default=None,
+        metadata={"help": "path to onnx"},
+    )
+    eval_ir: str = field(
+        default=None,
+        metadata={"help": "path to ir"},
+    )
 
 @dataclass
 class DataTrainingArguments:
@@ -564,6 +573,66 @@ def main():
 
     def compute_metrics(p: EvalPrediction):
         return metric.compute(predictions=p.predictions, references=p.label_ids)
+
+    if model_args.eval_ir is not None and model_args.eval_onnx is not None:
+        raise ValueError("eval_ir and eval_onnx are found. Use only either of them.")
+
+    if model_args.eval_ir is not None:
+        #TODO:
+        # [ ] enable async mode
+        # [ ] support varying batch size
+        # [ ] test so that no impact to existing feature
+        # [ ] Proper error out on dev (not needed, should error out!)
+
+        from openvino.inference_engine import IECore
+        ie = IECore()
+        ie_session = ie.load_network(network=model_args.eval_ir, device_name="CPU", num_requests=0)
+        model.iesess = ie_session
+
+        inames = list(ie_session.input_info.keys())
+
+        assert training_args.eval_batch_size == list(ie_session.input_info.values())[0].tensor_desc.dims[0], \
+        "batch size mismatches, set eval_batch_size to {}".format(ie_session.input_info['0'].tensor_desc.dims[0])
+
+        def ie_fwd_fn(inputs, iesess):
+            # bs = training_args.eval_batch_size #ir usually batch size of 1
+            ie_inputs = {
+                            inames[0]: inputs['input_ids'].detach().numpy(), 
+                            inames[1]: inputs['attention_mask'].detach().numpy(), 
+                            inames[2]: inputs['token_type_ids'].detach().numpy()
+                        }
+
+            ireq = iesess.start_async(request_id=0, inputs=ie_inputs)
+            ireq_stat = ireq.wait()
+            outputs = ireq.output_blobs
+            onames = list(ie_session.outputs.keys())
+            return {"start_logits": torch.from_numpy(outputs[onames[0]].buffer), "end_logits": torch.from_numpy(outputs[onames[1]].buffer)}
+
+        model.ie_fwd_fn = functools.partial(ie_fwd_fn, iesess=model.iesess)
+
+    if model_args.eval_onnx is not None:
+        #TODO:
+        # [ ] support varying batch size
+        # [ ] can it work with nncf.8bit.onnx 
+        import onnxruntime as ort
+        ort_session = ort.InferenceSession(model_args.eval_onnx)
+        model.ortsess = ort_session
+        dev = model.device
+        
+        # !!!! ensure no CUDA_VISIBLE_DEVICES is unset, cpu inference
+        def onnx_fwd_fn(inputs, ortsess):
+            bs = training_args.eval_batch_size
+            ort_inputs = dict(zip(map(lambda x: x.name, model.ortsess.get_inputs()), 
+                                    (inputs['input_ids'].detach().numpy(), 
+                                     inputs['attention_mask'].detach().numpy(), 
+                                     inputs['token_type_ids'].detach().numpy())
+                              ))
+            if bs - inputs['attention_mask'].shape[0] > 0:
+                return {"start_logits": torch.zeros_like(inputs['input_ids'], dtype=torch.float32), "end_logits": torch.zeros_like(inputs['input_ids'], dtype=torch.float32)}
+            else:
+                outputs= ortsess.run(None, ort_inputs)
+                return {"start_logits": torch.from_numpy(outputs[0]), "end_logits": torch.from_numpy(outputs[1])}
+        model.onnx_fwd_fn = functools.partial(onnx_fwd_fn, ortsess=model.ortsess)
 
     # Initialize our Trainer
     trainer = QuestionAnsweringTrainer(
