@@ -1,0 +1,43 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Eval squadv1", 
+            "type": "python",
+            "request": "launch",
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "",
+                "TORCH_DISTRIBUTED_DEBUG": "DETAIL",
+            },
+            "cwd": "${workspaceFolder}/transformers/examples/pytorch/question-answering/",
+            "program": "run_qa.py",
+            "args": [
+                "--model_name_or_path",
+                "vuiseng9/bert-base-uncased-squad", 
+                // "vuiseng9/bert-base-squadv1",
+                // "Intel/bert-base-uncased-sparse-90-unstructured-pruneofa",
+                // "/home/vchua/unstructured_90/checkpoint-110000",
+                // "csarron/bert-base-uncased-squad-v1",
+                // "bert-large-uncased-whole-word-masking-finetuned-squad",
+                "--dataset_name", "squad",
+                "--dataloader_num_workers", "8",
+                "--do_eval",
+                "--per_device_eval_batch_size", "1",
+                "--max_seq_length", "384",
+                // "--max_eval_samples", "10",
+                "--doc_stride", "128",
+                "--output_dir", "/tmp/vscode-runs/pegasus/eval-ir-squad1",
+                "--overwrite_output_dir",
+                "--eval_onnx", 
+                // "/data/vchua/run/temp/nncf-mvmt-b7k/bert-base-squad-v1-fp32/bert-base-squad-v1.fp32.onnx",
+                "/data/vchua/run/temp/nncf-mvmt-b7k/bert-squad-nncf-mvmt-filled-lt-fp32/NNCFNetwork-sparse-filled.cropped.onnx",
+                // "/data/vchua/run/temp/nncf-mvmt-b7k/bert-squad-nncf-mvmt-filled-lt-8bit/bert-squad-final.NNCFNetwork.cropped.quantized.onnx",
+                // "--eval_ir", 
+                // "/data/vchua/run/temp/nncf-mvmt-b7k/bert-squad-nncf-mvmt-filled-lt-8bit/bert-squad-nncf-mvmt-filled-lt-8bit.xml",
+            ]
+        },
+    ]
+}
