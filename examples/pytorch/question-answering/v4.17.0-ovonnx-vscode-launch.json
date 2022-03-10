@@ -29,7 +29,7 @@
                 "--max_seq_length", "384",
                 // "--max_eval_samples", "10",
                 "--doc_stride", "128",
-                "--output_dir", "/tmp/vscode-runs/pegasus/eval-ir-squad1",
+                "--output_dir", "/tmp/vscode-runs/hf-ovonnx/eval-ir-squad1",
                 "--overwrite_output_dir",
                 "--eval_onnx", 
                 // "/data/vchua/run/temp/nncf-mvmt-b7k/bert-base-squad-v1-fp32/bert-base-squad-v1.fp32.onnx",
@@ -37,6 +37,37 @@
                 // "/data/vchua/run/temp/nncf-mvmt-b7k/bert-squad-nncf-mvmt-filled-lt-8bit/bert-squad-final.NNCFNetwork.cropped.quantized.onnx",
                 // "--eval_ir", 
                 // "/data/vchua/run/temp/nncf-mvmt-b7k/bert-squad-nncf-mvmt-filled-lt-8bit/bert-squad-nncf-mvmt-filled-lt-8bit.xml",
+            ]
+        },
+        {
+            "name": "[eval] MNLI", 
+            // this model has been pretrained and released by official HF
+            // https://huggingface.co/bert-large-uncased-whole-word-masking-finetuned-squad
+            // f1 = 93.1584
+            // exact_match = 86.91
+            // eval_samples = 10784
+            "type": "python",
+            "request": "launch",
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "",
+                "TORCH_DISTRIBUTED_DEBUG": "DETAIL",
+                "WANDB_MODE": "disabled",
+            },
+            "cwd": "${workspaceFolder}/transformers/examples/pytorch/text-classification/",
+            "program": "run_glue.py",
+            "args": [
+                "--model_name_or_path",
+                // "textattack/bert-base-uncased-MNLI",
+                "aloxatel/bert-base-mnli",
+                // "madlag/bert-large-uncased-mnli",
+                "--task_name", "mnli",
+                "--do_eval",
+                "--per_device_eval_batch_size", "1",
+                "--max_seq_length", "128",
+                "--output_dir", "/tmp/vscode-runs/hf-ovonnx/eval-ir-mnli",
+                "--overwrite_output_dir",
+                // "--eval_ir", "/tmp/vscode-dev/mnli-manual-load/ir/mnli-BertForSequenceClassification.xml",
+                "--eval_onnx", "/tmp/vscode-dev/mnli-manual-load/ir/mnli-BertForSequenceClassification.cropped.quantized.onnx"
             ]
         },
     ]

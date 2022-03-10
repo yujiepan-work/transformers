@@ -2637,9 +2637,15 @@ class Trainer:
                     logits = smp_nested_concat(logits_mb)
             else:
                 if has_labels:
-                    with self.autocast_smart_context_manager():
-                        loss, outputs = self.compute_loss(model, inputs, return_outputs=True)
-                    loss = loss.mean().detach()
+                    if hasattr(model, 'onnx_fwd_fn'):
+                        outputs = model.onnx_fwd_fn(inputs)
+                    elif hasattr(model, 'ie_fwd_fn'):
+                        outputs = model.ie_fwd_fn(inputs)
+                        loss = None
+                    else:
+                        with self.autocast_smart_context_manager():
+                            loss, outputs = self.compute_loss(model, inputs, return_outputs=True)
+                        loss = loss.mean().detach()
 
                     if isinstance(outputs, dict):
                         logits = tuple(v for k, v in outputs.items() if k not in ignore_keys + ["loss"])

@@ -592,7 +592,7 @@ def main():
         inames = list(ie_session.input_info.keys())
 
         assert training_args.eval_batch_size == list(ie_session.input_info.values())[0].tensor_desc.dims[0], \
-        "batch size mismatches, set eval_batch_size to {}".format(ie_session.input_info['0'].tensor_desc.dims[0])
+        "batch size mismatches, set eval_batch_size to {}".format(list(ie_session.input_info.values())[0].tensor_desc.dims[0])
 
         def ie_fwd_fn(inputs, iesess):
             # bs = training_args.eval_batch_size #ir usually batch size of 1
@@ -613,12 +613,13 @@ def main():
     if model_args.eval_onnx is not None:
         #TODO:
         # [ ] support varying batch size
-        # [ ] can it work with nncf.8bit.onnx 
+        # [ ] can it work with nncf.8bit.onnx? tested working for fp32. nncf onnx (of course this is cropped, no mask prepos)
+        # [ ] 
         import onnxruntime as ort
         ort_session = ort.InferenceSession(model_args.eval_onnx)
         model.ortsess = ort_session
         dev = model.device
-        
+
         # !!!! ensure no CUDA_VISIBLE_DEVICES is unset, cpu inference
         def onnx_fwd_fn(inputs, ortsess):
             bs = training_args.eval_batch_size
