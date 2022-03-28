@@ -119,48 +119,69 @@ if __name__ == "__main__":
     # ckptpth = '/data2/vchua/run/feb-topt/bert-squad/run27-bert-squad-nncf-mvmt-bt-20eph-r0.02-threshold-end-3eph-prune-bias-prefilled/checkpoint-62500/pytorch_model.bin'
     # df62 = SparsityReporter.per_item_sparsity(torch.load(ckptpth))
 
-    ckptpth = '/data2/vchua/run/feb-topt/bert-squad/run27.fri-bert-squad-nncf-mvmt-lt-20eph-r0.02-threshold-end-3eph-prune-bias-filled/checkpoint-95000/pytorch_model.bin'
+    # -------------
+    # ckptpth = '/data2/vchua/run/feb-topt/bert-squad/run27.fri-bert-squad-nncf-mvmt-lt-20eph-r0.02-threshold-end-3eph-prune-bias-filled/checkpoint-95000/pytorch_model.bin'
+    # sd = torch.load(ckptpth)
+    # df95 = SparsityReporter.per_item_sparsity(sd)
+    # sparsified_sd = OrderedDict()
+    # for k, v in sd.items():
+    #     sparsified_sd[k] = v # copy every key value pair then only overriding them if needed
+    #     if 'binary_mask' in k:
+    #         key = k.split("pre_ops")[0]
+    #         if 'weight' in k:
+    #             key += 'weight'
+    #         elif 'bias' in k:
+    #             key += 'bias'
+    #         else:
+    #             raise ValueError("unexpected entry 1, pls debug")
+    #         if key in sd:
+    #             # print("{} exists in sd".format(key))
+    #             print("{}\n\t{}\n".format(key, k))
+    #             sparsified_sd[k] = v
+    #             sparsified_sd[key] = sd[key] * v
+    #         else:
+    #             raise ValueError("unexpected entry 2, pls debug")
+
+    # if len(sd) != len(sparsified_sd):
+    #     raise ValueError("#key mismatched")
+    # sparse_df95 = SparsityReporter.per_item_sparsity(sparsified_sd)
+
+    # sparse_ckptpth = os.path.join(os.path.dirname(ckptpth), "sparsified_pytorch_model.bin")
+    # torch.save(sparsified_sd, sparse_ckptpth)
+
+    # # dense_sd = torch.load("/data2/vchua/run/feb-topt/modelhub/bert-base-squadv1/pytorch_model.bin")
+    # dense_sd = torch.load("/data2/vchua/run/feb-topt/modelhub/bert-base-uncased-squad/pytorch_model.bin")
+    # sparse_hfsd = OrderedDict()
+    # for k, _ in dense_sd.items():
+    #     key = 'nncf_module.' + k
+    #     if key in sparsified_sd:
+    #         sparse_hfsd[k] = sparsified_sd[key]
+    #         pass
+    #     else:
+    #         raise ValueError("this k will be missing in sparse hfsd, pls debug")
+
+    # assert len(dense_sd) == len(sparse_hfsd), "Keys mismatch"
+    # df_sparse_hfsd = SparsityReporter.per_item_sparsity(sparse_hfsd)
+    # sparse_hfsd_ckptpth = os.path.join(os.path.dirname(ckptpth), "hf_sparse_pytorch_model.bin")
+    # torch.save(sparse_hfsd, sparse_hfsd_ckptpth)
+    # -------------
+
+    def filter_layer(df, keyword):
+        return df[df.layer_id.str.contains(keyword)]
+        
+    q_keyword = 'query'
+    k_keyword = 'key'
+    v_keyword = 'value'
+    o_keyword = 'ViTSelfOutput'
+
+    ffnn_w1_keyword = 'ViTIntermediate'
+    ffnn_w2_keyword = 'ViTOutput'
+
+    ckptpth = '/data/vchua/run/p3-vit/run.trial-vit-base-nncf-mvmt-10eph-bs256-LR2.0e-5-r0.075/checkpoint-15000/pytorch_model.bin'
     sd = torch.load(ckptpth)
-    df95 = SparsityReporter.per_item_sparsity(sd)
-    sparsified_sd = OrderedDict()
-    for k, v in sd.items():
-        sparsified_sd[k] = v # copy every key value pair then only overriding them if needed
-        if 'binary_mask' in k:
-            key = k.split("pre_ops")[0]
-            if 'weight' in k:
-                key += 'weight'
-            elif 'bias' in k:
-                key += 'bias'
-            else:
-                raise ValueError("unexpected entry 1, pls debug")
-            if key in sd:
-                # print("{} exists in sd".format(key))
-                print("{}\n\t{}\n".format(key, k))
-                sparsified_sd[k] = v
-                sparsified_sd[key] = sd[key] * v
-            else:
-                raise ValueError("unexpected entry 2, pls debug")
-
-    if len(sd) != len(sparsified_sd):
-        raise ValueError("#key mismatched")
-    sparse_df95 = SparsityReporter.per_item_sparsity(sparsified_sd)
-
-    sparse_ckptpth = os.path.join(os.path.dirname(ckptpth), "sparsified_pytorch_model.bin")
-    torch.save(sparsified_sd, sparse_ckptpth)
-
-    # dense_sd = torch.load("/data2/vchua/run/feb-topt/modelhub/bert-base-squadv1/pytorch_model.bin")
-    dense_sd = torch.load("/data2/vchua/run/feb-topt/modelhub/bert-base-uncased-squad/pytorch_model.bin")
-    sparse_hfsd = OrderedDict()
-    for k, _ in dense_sd.items():
-        key = 'nncf_module.' + k
-        if key in sparsified_sd:
-            sparse_hfsd[k] = sparsified_sd[key]
-            pass
-        else:
-            raise ValueError("this k will be missing in sparse hfsd, pls debug")
-
-    assert len(dense_sd) == len(sparse_hfsd), "Keys mismatch"
-    df_sparse_hfsd = SparsityReporter.per_item_sparsity(sparse_hfsd)
-    sparse_hfsd_ckptpth = os.path.join(os.path.dirname(ckptpth), "hf_sparse_pytorch_model.bin")
-    torch.save(sparse_hfsd, sparse_hfsd_ckptpth)
+    dfvit = SparsityReporter.per_item_sparsity(sd)
+    df = dfvit
+    df = df[~df.layer_id.str.contains('layer_norm')]
+    df_mask = df[df.layer_id.str.contains('binary_mask')]
+    df_impt = df[df.layer_id.str.contains('importance')]
     print("dummy")

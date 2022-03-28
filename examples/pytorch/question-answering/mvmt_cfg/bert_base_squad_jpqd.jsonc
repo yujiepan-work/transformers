@@ -1,0 +1,57 @@
+{
+"compression": 
+[
+    {
+        // Pruning
+        "algorithm": "movement_sparsity",
+        "params": {
+            // ramping of regularization factor
+            "schedule": "polynomial_decay", 
+            "sparsification_start_epoch": 1,
+            "fill_start_epoch": 10,
+            // sparsity level control - higher is sparser
+            "importance_regularization_factor": 0.030
+        },
+        "sparse_structure_by_scopes": 
+        [
+            // MHSA, sparsify by 32x32
+            ["block", [32, 32], "{re}.*BertAttention*"],
+            // FFN W1, sparsify by row 
+            ["per_dim", [0], "{re}.*BertIntermediate*"], 
+            // FFN W2, sparsify by column
+            ["per_dim", [1], "{re}.*BertOutput*"]         
+        ],
+        "ignored_scopes": 
+        [
+            // Skip sparsifying embedding and classifier
+            "{re}.*NNCFEmbedding", "{re}.*qa_outputs*"
+        ] 
+    },
+    {
+        // Quantize-Aware Training
+        "algorithm": "quantization",
+        "weights": {
+            "mode": "symmetric",
+            "bits": 8,
+            "per_tensor": true
+        },
+        "activations": {
+            "mode": "symmetric",
+            "bits": 8,
+            "per_tensor": true
+        }
+    },
+    {
+        // Distillation
+        "algorithm": "knowledge_distillation",
+        "temperature": 2,
+        // ratio of soft to hard loss
+        "loss_weightage": 0.9
+    }
+]
+}
+
+
+
+
+

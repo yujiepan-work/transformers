@@ -58,6 +58,14 @@ from nncf.config.structures import BNAdaptationInitArgs
 from nncf.config.structures import QuantizationRangeInitArgs
 from nncf.common.utils.tensorboard import prepare_for_tensorboard
 
+import pandas as pd
+pd.set_option('display.max_rows', None)
+pd.set_option('display.max_columns', None)
+pd.set_option('display.width', 2000)
+pd.set_option('display.float_format', '{:20,.2f}'.format)
+pd.set_option('display.max_colwidth', None)
+from nncf.torch.layers import NNCFLinear
+
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
 check_min_version("4.9.0")
 
@@ -96,7 +104,20 @@ class ModelArguments:
             "with private models)."
         },
     )
-
+    manual_crop: bool = field(
+        default=None,
+        metadata={"help": "realize physical dimension of model, depends on structured mask"},
+    )
+    manual_load: str = field(
+        default=None,
+        metadata={"help": "path to checkpoint that has been wrapped with nncf-mvmt-p3, assume checkpoint contains its corresponding nncf checkpoint"},
+    )
+    skip_quantize: bool = field(
+        default=False,
+        metadata={
+            "help": "skip copying of quantization pre ops"
+        },
+    )
 
 @dataclass
 class DataTrainingArguments:
@@ -413,6 +434,11 @@ def main():
 
         return tokenized_examples
 
+    if model_args.manual_load is not None:
+        overriding_nncfcfg = os.path.join(model_args.manual_load, "nncf-mvmt-p3.json")
+        assert os.path.exists(overriding_nncfcfg), "Missing config {}".format(overriding_nncfcfg)
+        training_args.nncf_config = overriding_nncfcfg
+
     if training_args.do_train or (training_args.do_eval and training_args.nncf_config is not None):
         if "train" not in raw_datasets:
             raise ValueError("--do_train requires a train dataset")
@@ -567,6 +593,18 @@ def main():
             os.makedirs(nncf_config["log_dir"])
         import shutil
         shutil.copy(training_args.nncf_config, nncf_config["log_dir"])
+
+        if model_args.manual_load is not None and 'compression' in nncf_config:
+            override_qcfg_init = dict(range=dict(num_init_samples=32), 
+                                      batchnorm_adaptation=dict(num_bn_adaptation_samples=32))
+
+            if isinstance(nncf_config['compression'], list):
+                for algo in nncf_config['compression']:
+                    if algo['algorithm'] == 'quantization':
+                        algo['initializer'] = override_qcfg_init
+            elif nncf_config['compression']['algorithm'] == 'quantization':
+                nncf_config['compression']['initializer'] = override_qcfg_init
+
         if training_args.do_train or (training_args.do_eval and nncf_config is not None):
             train_dataloader = get_train_dataloader_for_init(training_args, train_dataset, data_collator)
             class SquadInitializingDataloader(PTInitializingDataLoader):
@@ -603,16 +641,342 @@ def main():
     else:
         compression_ctrl, model = retval
 
-    GEN_ONNX_AT_END = True
+    if model_args.manual_load is not None:
+        import torch
+        model.load_state_dict(torch.load(os.path.join(model_args.manual_load, "pytorch_model.bin")))
+        if model_args.manual_crop is True:
+            # [Important Note] We assume structured mask is already in saved checkpoint, we are not deriving structured mask here.
+            mvmt_ctrl = None
+            is_quantized = False
+            if hasattr(compression_ctrl, 'child_ctrls'):
+                for ctrl in compression_ctrl.child_ctrls:
+                    if ctrl.__class__.__name__ == 'QuantizationController':
+                        is_quantized=True
+                        for k, wqinfo in ctrl.weight_quantizers.items():
+                            assert wqinfo.quantizer_module_ref.per_channel == False, "Per-channel wt.q {}".format(k.target_node_name)
+                        for k, aqinfo in ctrl.non_weight_quantizers.items():
+                            assert aqinfo.quantizer_module_ref.per_channel == False, "Per-channel act.q {}".format(k.target_node_name)
+                    elif ctrl.__class__.__name__ == 'MovementSparsityController':
+                        mvmt_ctrl = ctrl
+            elif compression_ctrl.__class__.__name__ == 'MovementSparsityController':
+                mvmt_ctrl = compression_ctrl
+
+            if model_args.skip_quantize is True:
+                is_quantized = False
+
+            if mvmt_ctrl is not None:
+                mvmt_ctrl._propagate_masks()
+
+                def get_parent(model, named_mod):
+                    scope_tokens = named_mod.split(".")
+                    child_attr = scope_tokens[-1]
+                    parent = model
+                    for attr in scope_tokens[:-1]:
+                        parent = parent._modules[attr]
+                    return parent, child_attr
+
+                def get_tensor_shape_tuple(tensor):
+                    _torchsize = tensor.shape
+                    return tuple([_torchsize[dim] for dim in range(len(_torchsize))])
+
+                # final_model = AutoModelForQuestionAnswering.from_pretrained(
+                #         model_args.model_name_or_path,
+                #         from_tf=bool(".ckpt" in model_args.model_name_or_path),
+                #         config=config,
+                #         cache_dir=model_args.cache_dir,
+                #         revision=model_args.model_revision,
+                #         use_auth_token=True if model_args.use_auth_token else None,
+                #     )
+
+                structure_rpt = []
+                with torch.no_grad():
+                    for group_id, ctxes in mvmt_ctrl.structured_ctx_by_group.items():
+                        for ctx in ctxes:
+                            nncf_graph_node_name = ctx.sparsifying_node_name
+                            named_mod = mvmt_ctrl.op2namedmodule[nncf_graph_node_name]
+                            block_id = group_id
+
+                            if any(map(nncf_graph_node_name.__contains__, ['BertIntermediate','BertOutput'])):
+                                if nncf_graph_node_name.__contains__('BertIntermediate'):
+                                    # prune row
+                                    row_ids_to_keep = ctx.sparse_module_info.operand.weight_ctx.binary_mask.amax(dim=1).nonzero().reshape(-1)
+                                    finalw = ctx.sparse_module_info.module.weight[row_ids_to_keep, :].clone().detach()
+                                    finalb = ctx.sparse_module_info.module.bias[row_ids_to_keep].clone().detach()
+                                    assert finalw.shape[0] == finalb.shape[0], "mismatch bias to weight"
+                                    ofeat, ifeat = finalw.shape
+                                    new_module = torch.nn.Linear(ifeat, ofeat)
+                                    new_sd = new_module.state_dict()
+                                    new_sd['weight'] = finalw
+                                    new_sd['bias'] = finalb
+                                    new_module.load_state_dict(new_sd)
+                                    new_wrap_module = NNCFLinear.from_module(new_module)
+                                    parent, child_attr = get_parent(mvmt_ctrl.model, named_mod)
+                                    original_wrapped_module = getattr(parent, child_attr)
+                                    if is_quantized is True:
+                                        wq_mod = None
+                                        for preop, mod in original_wrapped_module.pre_ops.items():
+                                            if mod.__class__.__name__ == 'UpdateWeight':
+                                                wq_mod = mod
+                                                break
+                                        if wq_mod is not None:
+                                            new_wrap_module.pre_ops = torch.nn.ModuleDict({'0':wq_mod})
+                                    setattr(parent, child_attr, new_wrap_module)
+                                    # parent, child_attr = get_parent(final_model, named_mod.replace('nncf_module.',""))
+                                    # setattr(parent, child_attr, new_module)
+
+                                    orig_w_shape = get_tensor_shape_tuple(ctx.sparse_module_info.module.weight)
+                                    orig_b_shape = get_tensor_shape_tuple(ctx.sparse_module_info.module.bias)
+                                    final_w_shape = get_tensor_shape_tuple(finalw)
+                                    final_b_shape = get_tensor_shape_tuple(finalb)
+
+                                    structure_rpt.append(
+                                        dict(
+                                            pt_module_name=named_mod,
+                                            block_id=group_id,
+                                            orig_w_shape=orig_w_shape,
+                                            final_w_shape=final_w_shape,
+                                            orig_b_shape=orig_b_shape,
+                                            final_b_shape=final_b_shape,
+                                            prune_by="row",
+                                            id_to_keep=row_ids_to_keep.tolist(),
+                                            head_id_to_keep=None,
+                                            nncf_graph_node=nncf_graph_node_name,
+                                        )
+                                    )
+
+                                else:
+                                    # prune col
+                                    col_ids_to_keep = ctx.sparse_module_info.operand.weight_ctx.binary_mask.amax(dim=0).nonzero().reshape(-1)
+                                    finalw = ctx.sparse_module_info.module.weight[:, col_ids_to_keep].clone().detach()
+                                    finalb = ctx.sparse_module_info.module.bias[:].clone().detach()
+                                    assert finalw.shape[0] == finalb.shape[0], "mismatch bias to weight"
+                                    ofeat, ifeat = finalw.shape
+                                    new_module = torch.nn.Linear(ifeat, ofeat)
+                                    new_sd = new_module.state_dict()
+                                    new_sd['weight'] = finalw
+                                    new_sd['bias'] = finalb
+                                    new_module.load_state_dict(new_sd)
+                                    new_wrap_module = NNCFLinear.from_module(new_module)
+                                    parent, child_attr = get_parent(mvmt_ctrl.model, named_mod)
+                                    original_wrapped_module = getattr(parent, child_attr)
+                                    if is_quantized is True:
+                                        wq_mod = None
+                                        for preop, mod in original_wrapped_module.pre_ops.items():
+                                            if mod.__class__.__name__ == 'UpdateWeight':
+                                                wq_mod = mod
+                                                break
+                                        if wq_mod is not None:
+                                            new_wrap_module.pre_ops = torch.nn.ModuleDict({'0':wq_mod})
+                                    setattr(parent, child_attr, new_wrap_module)
+                                    # parent, child_attr = get_parent(final_model, named_mod.replace('nncf_module.',""))
+                                    # setattr(parent, child_attr, new_module)
+
+                                    orig_w_shape = get_tensor_shape_tuple(ctx.sparse_module_info.module.weight)
+                                    orig_b_shape = get_tensor_shape_tuple(ctx.sparse_module_info.module.bias)
+                                    final_w_shape = get_tensor_shape_tuple(finalw)
+                                    final_b_shape = get_tensor_shape_tuple(finalb)
+
+                                    structure_rpt.append(
+                                        dict(
+                                            pt_module_name=named_mod,
+                                            block_id=group_id,
+                                            orig_w_shape=orig_w_shape,
+                                            final_w_shape=final_w_shape,
+                                            orig_b_shape=orig_b_shape,
+                                            final_b_shape=final_b_shape,
+                                            prune_by="col",
+                                            id_to_keep=col_ids_to_keep.tolist(),
+                                            head_id_to_keep=None,
+                                            nncf_graph_node=nncf_graph_node_name,
+                                        )
+                                    )
+                            else:
+                                # ndiv = ctx.dependent_structured_mask.reshape(-1).shape[0]
+                                # head_id_to_keep = torch.masked_select(torch.range(0, ndiv-1, dtype=int), 
+                                #                     ctx.dependent_structured_mask.reshape(-1).cpu().to(bool)).tolist()
+
+                                if any(map(nncf_graph_node_name.__contains__, ['query','key','value'])):
+                                    # prune row
+                                    row_ids_to_keep = ctx.sparse_module_info.operand.weight_ctx.binary_mask.amax(dim=1).nonzero().reshape(-1)
+                                    finalw = ctx.sparse_module_info.module.weight[row_ids_to_keep, :].clone().detach()
+                                    finalb = ctx.sparse_module_info.module.bias[row_ids_to_keep].clone().detach()
+                                    assert finalw.shape[0] == finalb.shape[0], "mismatch bias to weight"
+                                    ofeat, ifeat = finalw.shape
+                                    new_module = torch.nn.Linear(ifeat, ofeat)
+                                    new_sd = new_module.state_dict()
+                                    new_sd['weight'] = finalw
+                                    new_sd['bias'] = finalb
+                                    new_module.load_state_dict(new_sd)
+                                    new_wrap_module = NNCFLinear.from_module(new_module)
+                                    parent, child_attr = get_parent(mvmt_ctrl.model, named_mod)
+                                    original_wrapped_module = getattr(parent, child_attr)
+                                    if is_quantized is True:
+                                        wq_mod = None
+                                        for preop, mod in original_wrapped_module.pre_ops.items():
+                                            if mod.__class__.__name__ == 'UpdateWeight':
+                                                wq_mod = mod
+                                                break
+                                        if wq_mod is not None:
+                                            new_wrap_module.pre_ops = torch.nn.ModuleDict({'0':wq_mod})
+                                    setattr(parent, child_attr, new_wrap_module)
+                                    # parent, child_attr = get_parent(final_model, named_mod.replace('nncf_module.',""))
+                                    # setattr(parent, child_attr, new_module)
+                                    parent.all_head_size = int(ofeat)
+                                    parent.num_attention_heads = int(ofeat/parent.attention_head_size)
+                                    
+                                    orig_w_shape = get_tensor_shape_tuple(ctx.sparse_module_info.module.weight)
+                                    orig_b_shape = get_tensor_shape_tuple(ctx.sparse_module_info.module.bias)
+                                    final_w_shape = get_tensor_shape_tuple(finalw)
+                                    final_b_shape = get_tensor_shape_tuple(finalb)
+
+                                    structure_rpt.append(
+                                        dict(
+                                            pt_module_name=named_mod,
+                                            block_id=group_id,
+                                            orig_w_shape=orig_w_shape,
+                                            final_w_shape=final_w_shape,
+                                            orig_b_shape=orig_b_shape,
+                                            final_b_shape=final_b_shape,
+                                            prune_by="group of 64 rows",
+                                            id_to_keep=row_ids_to_keep.tolist(),
+                                            head_id_to_keep=(row_ids_to_keep//64)[(row_ids_to_keep%64)==0].tolist(),
+                                            nncf_graph_node=nncf_graph_node_name,
+                                        )
+                                    )
+                                else:
+                                    # prune col
+                                    col_ids_to_keep = ctx.sparse_module_info.operand.weight_ctx.binary_mask.amax(dim=0).nonzero().reshape(-1)
+                                    finalw = ctx.sparse_module_info.module.weight[:, col_ids_to_keep].clone().detach()
+                                    finalb = ctx.sparse_module_info.module.bias[:].clone().detach()
+                                    assert finalw.shape[0] == finalb.shape[0], "mismatch bias to weight"
+                                    ofeat, ifeat = finalw.shape
+                                    new_module = torch.nn.Linear(ifeat, ofeat)
+                                    new_sd = new_module.state_dict()
+                                    new_sd['weight'] = finalw
+                                    new_sd['bias'] = finalb
+                                    new_module.load_state_dict(new_sd)
+                                    new_wrap_module = NNCFLinear.from_module(new_module)
+                                    parent, child_attr = get_parent(mvmt_ctrl.model, named_mod)
+                                    original_wrapped_module = getattr(parent, child_attr)
+                                    if is_quantized is True:
+                                        wq_mod = None
+                                        for preop, mod in original_wrapped_module.pre_ops.items():
+                                            if mod.__class__.__name__ == 'UpdateWeight':
+                                                wq_mod = mod
+                                                break
+                                        if wq_mod is not None:
+                                            new_wrap_module.pre_ops = torch.nn.ModuleDict({'0':wq_mod})
+                                    setattr(parent, child_attr, new_wrap_module)
+                                    # parent, child_attr = get_parent(final_model, named_mod.replace('nncf_module.',""))
+                                    # setattr(parent, child_attr, new_module)
+
+                                    orig_w_shape = get_tensor_shape_tuple(ctx.sparse_module_info.module.weight)
+                                    orig_b_shape = get_tensor_shape_tuple(ctx.sparse_module_info.module.bias)
+                                    final_w_shape = get_tensor_shape_tuple(finalw)
+                                    final_b_shape = get_tensor_shape_tuple(finalb)
+
+                                    structure_rpt.append(
+                                        dict(
+                                            pt_module_name=named_mod,
+                                            block_id=group_id,
+                                            orig_w_shape=orig_w_shape,
+                                            final_w_shape=final_w_shape,
+                                            orig_b_shape=orig_b_shape,
+                                            final_b_shape=final_b_shape,
+                                            prune_by="group of 64 cols",
+                                            id_to_keep=col_ids_to_keep.tolist(),
+                                            head_id_to_keep=(col_ids_to_keep//64)[(col_ids_to_keep%64)==0].tolist(),
+                                            nncf_graph_node=nncf_graph_node_name,
+                                        )
+                                    )
+
+            ir_dir = os.path.join(training_args.output_dir, "ir")
+            os.makedirs(ir_dir, exist_ok=True)
+
+            import pandas as pd
+            torch.save(structure_rpt, os.path.join(ir_dir, "sparsity_structures.pkl"))
+            structure_df = pd.DataFrame.from_dict(structure_rpt)
+            structure_df.id_to_keep = "See pkl"
+
+            structure_df.to_csv(
+                os.path.join(ir_dir, "sparsity_structures.csv"), index=False)
+            with open(os.path.join(ir_dir, 'sparsity_structures.md'), 'w') as f:
+                structure_df.to_markdown(f)
+
+            # model = final_model
+            # compression_ctrl = None
+            from reporter.sparsity_reporter import SparsityReporter
+            crop_df = SparsityReporter.per_item_sparsity(mvmt_ctrl.model.state_dict())
+            print("Surgery complete")
+
+
+            model_label = "{}-{}".format(data_args.dataset_name, model.get_nncf_wrapped_model().__class__.__name__)
+
+            if is_quantized is True:
+                onnx_pth = os.path.join(ir_dir, '{}.cropped.8bit.onnx'.format(model_label))
+            else:
+                onnx_pth = os.path.join(ir_dir, '{}.cropped.fp32.onnx'.format(model_label))
+            compression_ctrl.export_model(onnx_pth)
+
+            if os.path.exists(onnx_pth):
+                import subprocess
+                subprocess.run(["mo", "--input_model", onnx_pth, "--model_name", os.path.basename(os.path.splitext(onnx_pth)[0]), "--output_dir", ir_dir], check=True)
+
+
+    GEN_ONNX_AT_END = False
     if training_args.to_onnx and GEN_ONNX_AT_END is False:
     # Expecting the following forward signature:
     # (input_ids, attention_mask, token_type_ids, ...)
+        ir_dir = os.path.join(training_args.output_dir, "ir")
+        os.makedirs(ir_dir, exist_ok=True)
+
         if nncf_config is not None:
-            compression_ctrl.export_model(training_args.to_onnx)
+            mvmt_ctrl = None
+            is_quantized = False
+            if hasattr(compression_ctrl, 'child_ctrls'):
+                for ctrl in compression_ctrl.child_ctrls:
+                    if ctrl.__class__.__name__ == 'QuantizationController':
+                        is_quantized=True
+                        for k, wqinfo in ctrl.weight_quantizers.items():
+                            assert wqinfo.quantizer_module_ref.per_channel == False, "Per-channel wt.q {}".format(k.target_node_name)
+                        for k, aqinfo in ctrl.non_weight_quantizers.items():
+                            assert aqinfo.quantizer_module_ref.per_channel == False, "Per-channel act.q {}".format(k.target_node_name)
+                    elif ctrl.__class__.__name__ == 'MovementSparsityController':
+                        mvmt_ctrl = ctrl
+            elif compression_ctrl.__class__.__name__ == 'MovementSparsityController':
+                mvmt_ctrl = compression_ctrl
+            elif compression_ctrl.__class__.__name__ == 'QuantizationController':
+                is_quantized = True
+
+            model_label = "{}-{}".format(data_args.dataset_name, model.get_nncf_wrapped_model().__class__.__name__)
+            if is_quantized is True:
+                onnx_pth = os.path.join(ir_dir, '{}.8bit.onnx'.format(model_label))
+            else:
+                onnx_pth = os.path.join(ir_dir, '{}.fp32.onnx'.format(model_label))
+            compression_ctrl.export_model(onnx_pth)
+
+            if os.path.exists(onnx_pth):
+                import subprocess
+                subprocess.run(["mo", "--input_model", onnx_pth, "--model_name", os.path.basename(os.path.splitext(onnx_pth)[0]), "--output_dir", ir_dir], check=True)
+
         else:
+            def generate_input_names_list(num_inputs: int):
+                return [f'input.{idx}' for idx in range(0, num_inputs)]
+
             model.to('cpu')
+            import torch
+            from torch import onnx
+            model_label = "{}-{}".format(data_args.dataset_name, model.__class__.__name__)
+            onnx_pth = os.path.join(ir_dir, '{}.dense.fp32.onnx'.format(model_label))
+
             dummy_tensor = torch.ones([1, 384], dtype=torch.long)
-            onnx.export(model, (dummy_tensor, dummy_tensor, dummy_tensor), training_args.to_onnx)
+            onnx.export(model, (dummy_tensor, dummy_tensor, dummy_tensor), onnx_pth, 
+                        input_names=generate_input_names_list(3), opset_version=10)
+
+            if os.path.exists(onnx_pth):
+                import subprocess
+                subprocess.run(["mo", "--input_model", onnx_pth, "--model_name", os.path.basename(os.path.splitext(onnx_pth)[0]), "--output_dir", ir_dir], check=True)
+        exit()
 
     if teacher_model is not None:
         # Initialize our Trainer
