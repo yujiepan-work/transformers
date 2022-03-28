@@ -17,24 +17,22 @@ import logging
 import os
 import sys
 from dataclasses import dataclass, field
-from typing import Optional, OrderedDict
+from typing import Optional
 
 import datasets
 import numpy as np
 import torch
 from datasets import load_dataset
 from PIL import Image
-import torchvision
-from torchvision import transforms
-# .transforms import (
-#     CenterCrop,
-#     Compose,
-#     Normalize,
-#     RandomHorizontalFlip,
-#     RandomResizedCrop,
-#     Resize,
-#     ToTensor,
-# )
+from torchvision.transforms import (
+    CenterCrop,
+    Compose,
+    Normalize,
+    RandomHorizontalFlip,
+    RandomResizedCrop,
+    Resize,
+    ToTensor,
+)
 
 import transformers
 from transformers import (
@@ -50,14 +48,13 @@ from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version
 from transformers.utils.versions import require_version
 
-from copy import deepcopy
 
 """ Fine-tuning a 🤗 Transformers model for image classification"""
 
 logger = logging.getLogger(__name__)
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
-check_min_version("4.16.0")
+check_min_version("4.17.0")
 
 require_version("datasets>=1.8.0", "To fix: pip install -r examples/pytorch/image-classification/requirements.txt")
 
@@ -86,7 +83,6 @@ class DataTrainingArguments:
     dataset_config_name: Optional[str] = field(
         default=None, metadata={"help": "The configuration name of the dataset to use (via the datasets library)."}
     )
-    data_dir: Optional[str] = field(default=None, metadata={"help": "A folder containing the split folder. e.g. imagenet/{train, val}"})
     train_dir: Optional[str] = field(default=None, metadata={"help": "A folder containing the training data."})
     validation_dir: Optional[str] = field(default=None, metadata={"help": "A folder containing the validation data."})
     train_val_split: Optional[float] = field(
@@ -155,88 +151,6 @@ def collate_fn(examples):
     labels = torch.tensor([example["labels"] for example in examples])
     return {"pixel_values": pixel_values, "labels": labels}
 
-def collate_tokenizer_output_fn(examples):
-    return {
-                "pixel_values": torch.stack(list(map(lambda x: torch.Tensor(x[0]['pixel_values'][0]), examples))),
-                "labels": torch.tensor(list(map(lambda x:x[1], examples)))
-            }
-
-def imagenet_collate_fn(examples):
-    batch_data, batch_label = list(zip(*examples))
-    return {"pixel_values": torch.stack(batch_data), "labels": torch.tensor(batch_label)}
-    # batch = dict(zip(["pixel_values", "labels"],zip(*examples)))
-    # batch['pixel_values'] = torch.stack(batch['pixel_values'])
-    # batch['labels'] = torch.tensor(batch['labels'])
-    # return batch
-
-def create_imagenet_datasets(dataset_dir):
-    normalize = transforms.Normalize(mean=(0.5, 0.5, 0.5),
-                                     std=(0.5, 0.5, 0.5))
-
-    mode=transforms.InterpolationMode.BICUBIC
-    image_size = 224
-    size = int(image_size / 0.9)
-
-    val_transform = transforms.Compose([
-        # transforms.Resize([image_size, image_size]),
-        transforms.Resize(size, interpolation=mode),
-        transforms.CenterCrop(image_size),
-        transforms.ToTensor(),
-        normalize,
-    ])
-    train_transforms = transforms.Compose([
-        transforms.RandomResizedCrop(image_size, interpolation=mode),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-        normalize,
-    ])
-
-    train_dataset = torchvision.datasets.ImageFolder(os.path.join(dataset_dir, 'train'), train_transforms)
-    val_dataset = torchvision.datasets.ImageFolder(os.path.join(dataset_dir, 'val'), val_transform)
-    return train_dataset, val_dataset
-
-class TransformsTokenizer:
-    def __init__(self, tokenizer):
-        self.tokenizer = tokenizer
-
-    def __call__(self, tensor):
-        return self.tokenizer(tensor)
-
-    def __repr__(self):
-        return self.__class__.__name__ + '()'
-
-def create_imagenet_datasets_new(dataset_dir, tokenizer):
-    normalize = transforms.Normalize(mean=(0.5, 0.5, 0.5),
-                                     std=(0.5, 0.5, 0.5))
-
-    mode=transforms.InterpolationMode.BICUBIC
-    image_size = 224
-    size = int(image_size / 0.9)
-
-    # val_transform = transforms.Compose([
-    #     # transforms.Resize([image_size, image_size]),
-    #     transforms.Resize(size, interpolation=mode),
-    #     transforms.CenterCrop(image_size),
-    #     transforms.ToTensor(),
-    #     normalize,
-    # ])
-
-
-    val_transform = transforms.Compose([
-        TransformsTokenizer(tokenizer)
-    ])
-
-    train_transforms = transforms.Compose([
-        transforms.RandomResizedCrop(image_size, interpolation=mode),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-        normalize,
-    ])
-
-    train_dataset = torchvision.datasets.ImageFolder(os.path.join(dataset_dir, 'train'), train_transforms)
-    val_dataset = torchvision.datasets.ImageFolder(os.path.join(dataset_dir, 'val'), val_transform)
-    return train_dataset, val_dataset
-
 
 def main():
     # See all possible arguments in src/transformers/training_args.py
@@ -286,47 +200,29 @@ def main():
                 "the `--output_dir` or add `--overwrite_output_dir` to train from scratch."
             )
 
-    feature_extractor = AutoFeatureExtractor.from_pretrained(
-        model_args.feature_extractor_name or model_args.model_name_or_path,
+    # Initialize our dataset and prepare it for the 'image-classification' task.
+    ds = load_dataset(
+        data_args.dataset_name,
+        data_args.dataset_config_name,
+        data_files=data_args.data_files,
         cache_dir=model_args.cache_dir,
-        revision=model_args.model_revision,
-        use_auth_token=True if model_args.use_auth_token else None,
+        task="image-classification",
     )
 
-    if data_args.dataset_name.lower() == "imagenet":
-        train_dataset, val_dataset = create_imagenet_datasets(data_args.data_dir)
-        # train_dataset, val_dataset = create_imagenet_datasets_new(data_args.data_dir, feature_extractor)
-        label2id = deepcopy(val_dataset.class_to_idx)
-        id2label = OrderedDict()
-        labels = []
-        for label, id in label2id.items():
-            id2label[id]=label
-            labels.append(label)
+    # If we don't have a validation split, split off a percentage of train as validation.
+    data_args.train_val_split = None if "validation" in ds.keys() else data_args.train_val_split
+    if isinstance(data_args.train_val_split, float) and data_args.train_val_split > 0.0:
+        split = ds["train"].train_test_split(data_args.train_val_split)
+        ds["train"] = split["train"]
+        ds["validation"] = split["test"]
 
-    else:
-        # Initialize our dataset and prepare it for the 'image-classification' task.
-        ds = load_dataset(
-            data_args.dataset_name,
-            data_args.dataset_config_name,
-            data_files=data_args.data_files,
-            cache_dir=model_args.cache_dir,
-            task="image-classification",
-        )
-
-        # If we don't have a validation split, split off a percentage of train as validation.
-        data_args.train_val_split = None if "validation" in ds.keys() else data_args.train_val_split
-        if isinstance(data_args.train_val_split, float) and data_args.train_val_split > 0.0:
-            split = ds["train"].train_test_split(data_args.train_val_split)
-            ds["train"] = split["train"]
-            ds["validation"] = split["test"]
-
-        # Prepare label mappings.
-        # We'll include these in the model's config to get human readable labels in the Inference API.
-        labels = ds["train"].features["labels"].names
-        label2id, id2label = dict(), dict()
-        for i, label in enumerate(labels):
-            label2id[label] = str(i)
-            id2label[str(i)] = label
+    # Prepare label mappings.
+    # We'll include these in the model's config to get human readable labels in the Inference API.
+    labels = ds["train"].features["labels"].names
+    label2id, id2label = dict(), dict()
+    for i, label in enumerate(labels):
+        label2id[label] = str(i)
+        id2label[str(i)] = label
 
     # Load the accuracy metric from the datasets package
     metric = datasets.load_metric("accuracy")
@@ -355,79 +251,72 @@ def main():
         revision=model_args.model_revision,
         use_auth_token=True if model_args.use_auth_token else None,
     )
+    feature_extractor = AutoFeatureExtractor.from_pretrained(
+        model_args.feature_extractor_name or model_args.model_name_or_path,
+        cache_dir=model_args.cache_dir,
+        revision=model_args.model_revision,
+        use_auth_token=True if model_args.use_auth_token else None,
+    )
 
-    if data_args.dataset_name.lower() == "imagenet":
-        # Initalize our trainer
-        trainer = Trainer(
-            model=model,
-            args=training_args,
-            train_dataset=train_dataset if training_args.do_train else None,
-            eval_dataset=val_dataset if training_args.do_eval else None,
-            compute_metrics=compute_metrics,
-            # data_collator=collate_tokenizer_output_fn,
-            data_collator=imagenet_collate_fn,
-            # tokenizer=feature_extractor,
-        )
-    else:
-        # Define torchvision transforms to be applied to each image.
-        normalize = transforms.Normalize(mean=feature_extractor.image_mean, std=feature_extractor.image_std)
-        _train_transforms = transforms.Compose(
-            [
-                transforms.RandomResizedCrop(feature_extractor.size),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-                normalize,
-            ]
-        )
-        _val_transforms = transforms.Compose(
-            [
-                transforms.Resize(feature_extractor.size),
-                transforms.CenterCrop(feature_extractor.size),
-                transforms.ToTensor(),
-                normalize,
-            ]
-        )
+    # Define torchvision transforms to be applied to each image.
+    normalize = Normalize(mean=feature_extractor.image_mean, std=feature_extractor.image_std)
+    _train_transforms = Compose(
+        [
+            RandomResizedCrop(feature_extractor.size),
+            RandomHorizontalFlip(),
+            ToTensor(),
+            normalize,
+        ]
+    )
+    _val_transforms = Compose(
+        [
+            Resize(feature_extractor.size),
+            CenterCrop(feature_extractor.size),
+            ToTensor(),
+            normalize,
+        ]
+    )
 
-        def train_transforms(example_batch):
-            """Apply _train_transforms across a batch."""
-            example_batch["pixel_values"] = [
-                _train_transforms(pil_img.convert("RGB")) for pil_img in example_batch["image"]
-            ]
-            return example_batch
+    def train_transforms(example_batch):
+        """Apply _train_transforms across a batch."""
+        example_batch["pixel_values"] = [
+            _train_transforms(pil_img.convert("RGB")) for pil_img in example_batch["image"]
+        ]
+        return example_batch
 
-        def val_transforms(example_batch):
-            """Apply _val_transforms across a batch."""
-            example_batch["pixel_values"] = [_val_transforms(pil_img.convert("RGB")) for pil_img in example_batch["image"]]
-            return example_batch
+    def val_transforms(example_batch):
+        """Apply _val_transforms across a batch."""
+        example_batch["pixel_values"] = [_val_transforms(pil_img.convert("RGB")) for pil_img in example_batch["image"]]
+        return example_batch
 
-        if training_args.do_train:
-            if "train" not in ds:
-                raise ValueError("--do_train requires a train dataset")
-            if data_args.max_train_samples is not None:
-                ds["train"] = ds["train"].shuffle(seed=training_args.seed).select(range(data_args.max_train_samples))
-            # Set the training transforms
-            ds["train"].set_transform(train_transforms)
+    if training_args.do_train:
+        if "train" not in ds:
+            raise ValueError("--do_train requires a train dataset")
+        if data_args.max_train_samples is not None:
+            ds["train"] = ds["train"].shuffle(seed=training_args.seed).select(range(data_args.max_train_samples))
+        # Set the training transforms
+        ds["train"].set_transform(train_transforms)
 
-        if training_args.do_eval:
-            if "validation" not in ds:
-                raise ValueError("--do_eval requires a validation dataset")
-            if data_args.max_eval_samples is not None:
-                ds["validation"] = (
-                    ds["validation"].shuffle(seed=training_args.seed).select(range(data_args.max_eval_samples))
-                )
-            # Set the validation transforms
-            ds["validation"].set_transform(val_transforms)
+    if training_args.do_eval:
+        if "validation" not in ds:
+            raise ValueError("--do_eval requires a validation dataset")
+        if data_args.max_eval_samples is not None:
+            ds["validation"] = (
+                ds["validation"].shuffle(seed=training_args.seed).select(range(data_args.max_eval_samples))
+            )
+        # Set the validation transforms
+        ds["validation"].set_transform(val_transforms)
 
-        # Initalize our trainer
-        trainer = Trainer(
-            model=model,
-            args=training_args,
-            train_dataset=ds["train"] if training_args.do_train else None,
-            eval_dataset=ds["validation"] if training_args.do_eval else None,
-            compute_metrics=compute_metrics,
-            tokenizer=feature_extractor,
-            data_collator=collate_fn,
-        )
+    # Initalize our trainer
+    trainer = Trainer(
+        model=model,
+        args=training_args,
+        train_dataset=ds["train"] if training_args.do_train else None,
+        eval_dataset=ds["validation"] if training_args.do_eval else None,
+        compute_metrics=compute_metrics,
+        tokenizer=feature_extractor,
+        data_collator=collate_fn,
+    )
 
     # Training
     if training_args.do_train:
