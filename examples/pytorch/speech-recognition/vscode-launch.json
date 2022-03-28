@@ -1,0 +1,44 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "[eval] w2v2b-100h on ls-clean/test", 
+            "type": "python",
+            "request": "launch",
+            "justMyCode": false,
+            
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "3",
+                "TORCH_DISTRIBUTED_DEBUG": "DETAIL",
+                "WANDB_MODE": "disabled",
+                "WANDB_PROJECT": "summarization",
+                "WANDB_WATCH": "false",
+            },
+            "cwd": "${workspaceFolder}/transformers/examples/pytorch/speech-recognition",
+            "program": "eval-asr.py",
+            "args": [
+            ]
+        },
+        {
+            "name": "[eval] w2v2b-100h w/ LM on ls-clean/test", 
+            "type": "python",
+            "request": "launch",
+            "justMyCode": false,
+            
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "3",
+                "TORCH_DISTRIBUTED_DEBUG": "DETAIL",
+                "WANDB_MODE": "disabled",
+                "WANDB_PROJECT": "summarization",
+                "WANDB_WATCH": "false",
+            },
+            "cwd": "${workspaceFolder}/transformers/examples/pytorch/speech-recognition",
+            "program": "eval-asr-wt-lm.py",
+            "args": [
+            ]
+        },
+    ]
+}
