@@ -411,7 +411,7 @@ def main():
 
         return tokenized_examples
 
-    if training_args.do_train:
+    if training_args.do_train or (training_args.do_eval and training_args.nncf_config is not None): # allow post-training quantization evaluation or allow nncf checkpoint loading
         if "train" not in raw_datasets:
             raise ValueError("--do_train requires a train dataset")
         train_dataset = raw_datasets["train"]
@@ -563,7 +563,9 @@ def main():
             nncf_config["log_dir"] = training_args.output_dir
         if not os.path.exists(training_args.output_dir) and training_args.local_rank in [-1, 0]:
             os.makedirs(nncf_config["log_dir"])
-        if training_args.do_train:
+        import shutil
+        shutil.copy(training_args.nncf_config, nncf_config["log_dir"]) # back up input nncf_config
+        if training_args.do_train or (training_args.do_eval and nncf_config is not None):  # allow post-training quantization evaluation or allow nncf checkpoint loading
             train_dataloader = get_train_dataloader_for_init(training_args, train_dataset, data_collator)
             class SquadInitializingDataloader(PTInitializingDataLoader):
                 def get_inputs(self, dataloader_output):
