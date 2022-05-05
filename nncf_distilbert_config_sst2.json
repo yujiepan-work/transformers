@@ -1,0 +1,34 @@
+{
+    "input_info": [
+        {
+            "sample_size": [1, 128],
+            "type": "long"
+        },
+        {
+            "sample_size": [1, 128],
+            "type": "long"
+        }
+    ],
+    "compression": {
+        "algorithm": "quantization",
+        "initializer": {
+            "range": {
+                "num_init_samples": 32,
+                "type": "mean_percentile"
+            }
+        },
+        "ignored_scopes": [
+            "{re}TransformerBlock\\[[0-9]*\\]/FFN\\[ffn\\]/__mul___0",
+            "{re}TransformerBlock\\[[0-9]*\\]/FFN\\[ffn\\]/NNCFLinear\\[lin1\\]/linear_0"
+        ],
+        "activations":
+        {
+            "mode": "symmetric"
+        },
+        "weights":
+        {
+            "mode": "symmetric",
+            "signed": true
+        }
+    }
+}

@@ -23,8 +23,10 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 
 import torch
+from nncf.torch import create_compressed_model
 from torch import Tensor, device, nn
 from torch.nn import CrossEntropyLoss
+from transformers.file_utils import NNCF_PT_STATE_NAME
 
 from .activations import get_activation
 from .configuration_utils import PretrainedConfig
@@ -927,6 +929,7 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin, PushToHubMix
         state_dict: Optional[dict] = None,
         save_function: Callable = torch.save,
         push_to_hub: bool = False,
+        nncf_compression_state: Dict = None,
         **kwargs,
     ):
         """
@@ -997,6 +1000,10 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin, PushToHubMix
         # If we save using the predefined names, we can load using `from_pretrained`
         output_model_file = os.path.join(save_directory, WEIGHTS_NAME)
         save_function(state_dict, output_model_file)
+
+        if nncf_compression_state is not None:
+            nncf_state_output_file = os.path.join(save_directory, NNCF_PT_STATE_NAME)
+            save_function(nncf_compression_state, nncf_state_output_file)
 
         logger.info(f"Model weights saved in {output_model_file}")
 
@@ -1170,6 +1177,8 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin, PushToHubMix
         from_auto_class = kwargs.pop("_from_auto", False)
         _fast_init = kwargs.pop("_fast_init", True)
         torch_dtype = kwargs.pop("torch_dtype", None)
+        nncf_config = kwargs.pop("nncf_config", None)
+        nncf_eval = kwargs.pop("nncf_eval", False)
 
         from_pt = not (from_tf | from_flax)
 
@@ -1353,6 +1362,11 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin, PushToHubMix
                 )
                 raise
         elif from_pt:
+            if nncf_config is not None and nncf_eval:
+                compression_algo_controller, model = create_compressed_model(model, nncf_config,
+                                                                             compression_state=state_dict)
+                return compression_algo_controller, model
+
             model, missing_keys, unexpected_keys, mismatched_keys, error_msgs = cls._load_state_dict_into_model(
                 model,
                 state_dict,
@@ -1366,6 +1380,18 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin, PushToHubMix
 
         # Set model in evaluation mode to deactivate DropOut modules by default
         model.eval()
+
+        if nncf_config is not None:
+            compression_state = None
+
+            compression_state_file = os.path.join(pretrained_model_name_or_path, NNCF_PT_STATE_NAME)
+            if os.path.isfile(compression_state_file):
+                compression_state = torch.load(compression_state_file)
+            else:
+                compression_state = None
+            compression_algo_controller, model = create_compressed_model(model, nncf_config,
+                                                                         compression_state=compression_state)
+            return compression_algo_controller, model
 
         if output_loading_info:
             loading_info = {
@@ -1566,7 +1592,8 @@ PreTrainedModel.push_to_hub.__doc__ = PreTrainedModel.push_to_hub.__doc__.format
     object="model", object_class="AutoModel", object_files="model checkpoint"
 )
 
-
+import nncf
+@nncf.torch.register_module()
 class Conv1D(nn.Module):
     """
     1D-convolutional layer as defined by Radford et al. for OpenAI GPT (and also used in GPT-2).
