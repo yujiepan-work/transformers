@@ -575,6 +575,8 @@ def main():
                 QuantizationRangeInitArgs(SquadInitializingDataloader(train_dataloader)),
                 BNAdaptationInitArgs(SquadInitializingDataloader(train_dataloader)),
             ])
+        if training_args.nncf_ckpt is not None:
+            nncf_config['nncf_ckpt']=training_args.nncf_ckpt
 
     retval = AutoModelForQuestionAnswering.from_pretrained(
         model_args.model_name_or_path,
@@ -592,6 +594,10 @@ def main():
         compression_ctrl = None
     else:
         compression_ctrl, model = retval
+
+    if training_args.nncf_ckpt is not None:
+        import torch
+        model.load_state_dict(torch.load(os.path.join(training_args.nncf_ckpt, "pytorch_model.bin")))
 
     if training_args.to_onnx:
     # Expecting the following forward signature:

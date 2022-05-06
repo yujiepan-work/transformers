@@ -627,6 +627,11 @@ class TrainingArguments:
 
     nncf_config: str = field(default=None,
                              metadata={"help": "NNCF configuration .json file for compression-enabled training"})
+    
+    nncf_ckpt: str = field(
+        default=None,
+        metadata={"help": "path to folder that contains saved checkpoint of nncf-wrapped model, require corresponding of nncf_config being provided"},
+    )
 
     to_onnx: str = field(default=None,
                          metadata={"help": "Name of the ONNX model file to export the model to."})
