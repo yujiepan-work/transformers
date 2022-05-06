@@ -599,16 +599,6 @@ def main():
         import torch
         model.load_state_dict(torch.load(os.path.join(training_args.nncf_ckpt, "pytorch_model.bin")))
 
-    if training_args.to_onnx:
-    # Expecting the following forward signature:
-    # (input_ids, attention_mask, token_type_ids, ...)
-        if nncf_config is not None:
-            compression_ctrl.export_model(training_args.to_onnx)
-        else:
-            model.to('cpu')
-            dummy_tensor = torch.ones([1, 384], dtype=torch.long)
-            onnx.export(model, (dummy_tensor, dummy_tensor, dummy_tensor), training_args.to_onnx)
-
     # Initialize our Trainer
     trainer = QuestionAnsweringTrainer(
         model=model,
@@ -642,6 +632,55 @@ def main():
         trainer.log_metrics("train", metrics)
         trainer.save_metrics("train", metrics)
         trainer.save_state()
+
+    GEN_ONNX_AT_END=False
+    if training_args.gen_onnx and GEN_ONNX_AT_END is False:
+    # Expecting the following forward signature:
+    # (input_ids, attention_mask, token_type_ids, ...)
+        ir_dir = os.path.join(training_args.output_dir, "ir")
+        os.makedirs(ir_dir, exist_ok=True)
+
+        if nncf_config is not None:
+            is_quantized = False
+            if hasattr(compression_ctrl, 'child_ctrls'):
+                for ctrl in compression_ctrl.child_ctrls:
+                    if ctrl.__class__.__name__ == 'QuantizationController':
+                        is_quantized=True
+            elif compression_ctrl.__class__.__name__ == 'QuantizationController':
+                is_quantized = True
+
+            model_label = "{}-{}".format(data_args.dataset_name, model.get_nncf_wrapped_model().__class__.__name__)
+            if is_quantized is True:
+                onnx_pth = os.path.join(ir_dir, '{}.8bit.onnx'.format(model_label))
+            else:
+                onnx_pth = os.path.join(ir_dir, '{}.fp32.onnx'.format(model_label))
+            compression_ctrl.export_model(onnx_pth)
+
+            if os.path.exists(onnx_pth):
+                import subprocess
+                subprocess.run(["mo", "--input_model", onnx_pth, "--model_name", os.path.basename(os.path.splitext(onnx_pth)[0]), "--output_dir", ir_dir], check=True)
+
+        else:
+            def generate_input_names_list(num_inputs: int):
+                return [f'input.{idx}' for idx in range(0, num_inputs)]
+
+            model.to('cpu')
+            import torch
+            from torch import onnx
+            model_label = "{}-{}".format(data_args.dataset_name, model.__class__.__name__)
+            onnx_pth = os.path.join(ir_dir, '{}.dense.fp32.onnx'.format(model_label))
+
+
+            n_input = len(next(iter(trainer.get_eval_dataloader())).keys())
+            dummy_tensor = torch.ones([1, data_args.max_seq_length], dtype=torch.long)
+            dummy_input = tuple([dummy_tensor]*n_input)
+
+            onnx.export(model, dummy_input, onnx_pth, input_names=generate_input_names_list(n_input), opset_version=11)
+
+            if os.path.exists(onnx_pth):
+                import subprocess
+                subprocess.run(["mo", "--input_model", onnx_pth, "--model_name", os.path.basename(os.path.splitext(onnx_pth)[0]), "--output_dir", ir_dir], check=True)
+        exit()
 
     # Evaluation
     if training_args.do_eval:

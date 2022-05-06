@@ -633,8 +633,10 @@ class TrainingArguments:
         metadata={"help": "path to folder that contains saved checkpoint of nncf-wrapped model, require corresponding of nncf_config being provided"},
     )
 
-    to_onnx: str = field(default=None,
-                         metadata={"help": "Name of the ONNX model file to export the model to."})
+    gen_onnx: bool = field(default=False, metadata={"help": "export onnx to output directory"})
+
+    # to_onnx: str = field(default=None,
+    #                      metadata={"help": "Name of the ONNX model file to export the model to."})
 
     def __post_init__(self):
         # Handle --use_env option in torch.distributed.launch (local_rank not passed as an arg then).
