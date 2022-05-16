@@ -599,6 +599,9 @@ def main():
         import torch
         model.load_state_dict(torch.load(os.path.join(training_args.nncf_ckpt, "pytorch_model.bin")))
 
+    # g=model.get_graph()
+    # g.dump_human_readable_graph("nncf_readable.dot")
+
     # Initialize our Trainer
     trainer = QuestionAnsweringTrainer(
         model=model,
@@ -669,7 +672,6 @@ def main():
             from torch import onnx
             model_label = "{}-{}".format(data_args.dataset_name, model.__class__.__name__)
             onnx_pth = os.path.join(ir_dir, '{}.dense.fp32.onnx'.format(model_label))
-
 
             n_input = len(next(iter(trainer.get_eval_dataloader())).keys())
             dummy_tensor = torch.ones([1, data_args.max_seq_length], dtype=torch.long)
