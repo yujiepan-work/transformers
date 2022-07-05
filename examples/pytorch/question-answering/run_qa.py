@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 import datasets
+from sqlalchemy import false
 import torch
 from datasets import load_dataset, load_metric
 
@@ -94,7 +95,12 @@ class ModelArguments:
             "with private models)."
         },
     )
-
+    residualess: bool = field(
+        default=False,
+        metadata={
+            "help": "remove skip connection"
+        },
+    )
 
 @dataclass
 class DataTrainingArguments:
@@ -586,7 +592,8 @@ def main():
         revision=model_args.model_revision,
         use_auth_token=True if model_args.use_auth_token else None,
         nncf_config=nncf_config,
-        nncf_eval=nncf_config is not None and training_args.do_eval and not training_args.do_train
+        nncf_eval=nncf_config is not None and training_args.do_eval and not training_args.do_train,
+        residualess=model_args.residualess
     )
 
     if nncf_config is None:
@@ -594,6 +601,8 @@ def main():
         compression_ctrl = None
     else:
         compression_ctrl, model = retval
+
+    model.config.residualess = model_args.residualess
 
     if training_args.nncf_ckpt is not None:
         import torch
@@ -671,11 +680,12 @@ def main():
             onnx_pth = os.path.join(ir_dir, '{}.dense.fp32.onnx'.format(model_label))
 
 
-            n_input = len(next(iter(trainer.get_eval_dataloader())).keys())
+            # n_input = len(next(iter(trainer.get_eval_dataloader())).keys())
             dummy_tensor = torch.ones([1, data_args.max_seq_length], dtype=torch.long)
-            dummy_input = tuple([dummy_tensor]*n_input)
+            # dummy_input = tuple([dummy_tensor]*n_input)
 
-            onnx.export(model, dummy_input, onnx_pth, input_names=generate_input_names_list(n_input), opset_version=11)
+            # onnx.export(model, dummy_input, onnx_pth, input_names=generate_input_names_list(n_input), opset_version=11)
+            onnx.export(model, (dummy_tensor, dummy_tensor, dummy_tensor), onnx_pth, opset_version=11)
 
             if os.path.exists(onnx_pth):
                 import subprocess

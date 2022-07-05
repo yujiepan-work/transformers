@@ -1179,6 +1179,7 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin, PushToHubMix
         torch_dtype = kwargs.pop("torch_dtype", None)
         nncf_config = kwargs.pop("nncf_config", None)
         nncf_eval = kwargs.pop("nncf_eval", False)
+        residualess = kwargs.pop("residualess", False)
 
         from_pt = not (from_tf | from_flax)
 
@@ -1329,6 +1330,8 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin, PushToHubMix
             with no_init_weights(_enable=_fast_init):
                 model = cls(config, *model_args, **model_kwargs)
 
+        model.config.residualess = residualess
+
         if from_pt:
             # restore default dtype
             if dtype_orig is not None:
@@ -1364,7 +1367,7 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin, PushToHubMix
         elif from_pt:
             if nncf_config is not None and nncf_eval:
                 if 'nncf_ckpt' not in nncf_config: 
-                    model.load_state_dict(state_dict)
+                    model.load_state_dict(state_dict, strict=False)
                 compression_algo_controller, model = create_compressed_model(model, nncf_config,
                                                                              compression_state=None)
                 return compression_algo_controller, model
@@ -2190,7 +2193,7 @@ def apply_chunking_to_forward(
 
     # inspect.signature exist since python 3.5 and is a python method -> no problem with backward compatibility
     num_args_in_forward_chunk_fn = len(inspect.signature(forward_fn).parameters)
-    if num_args_in_forward_chunk_fn != len(input_tensors):
+    if (num_args_in_forward_chunk_fn-1) != len(input_tensors):
         raise ValueError(
             f"forward_chunk_fn expects {num_args_in_forward_chunk_fn} arguments, but only {len(input_tensors)} input "
             "tensors are given"

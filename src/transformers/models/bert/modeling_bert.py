@@ -356,10 +356,13 @@ class BertSelfOutput(nn.Module):
         self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
-    def forward(self, hidden_states, input_tensor):
+    def forward(self, hidden_states, input_tensor, residualess):
         hidden_states = self.dense(hidden_states)
         hidden_states = self.dropout(hidden_states)
-        hidden_states = self.LayerNorm(hidden_states + input_tensor)
+        if residualess is True:
+            hidden_states = self.LayerNorm(hidden_states)
+        else:
+            hidden_states = self.LayerNorm(hidden_states + input_tensor)
         return hidden_states
 
 
@@ -397,6 +400,7 @@ class BertAttention(nn.Module):
         encoder_attention_mask=None,
         past_key_value=None,
         output_attentions=False,
+        residualess=False,
     ):
         self_outputs = self.self(
             hidden_states,
@@ -407,7 +411,7 @@ class BertAttention(nn.Module):
             past_key_value,
             output_attentions,
         )
-        attention_output = self.output(self_outputs[0], hidden_states)
+        attention_output = self.output(self_outputs[0], hidden_states, residualess)
         outputs = (attention_output,) + self_outputs[1:]  # add attentions if we output them
         return outputs
 
@@ -434,13 +438,16 @@ class BertOutput(nn.Module):
         self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
-    def forward(self, hidden_states, input_tensor):
+    def forward(self, hidden_states, input_tensor, residualess):
         hidden_states = self.dense(hidden_states)
         hidden_states = self.dropout(hidden_states)
-        hidden_states = self.LayerNorm(hidden_states + input_tensor)
+        if residualess is True:
+            hidden_states = self.LayerNorm(hidden_states)
+        else:
+            hidden_states = self.LayerNorm(hidden_states + input_tensor)
         return hidden_states
 
-
+from functools import partial
 class BertLayer(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -464,6 +471,7 @@ class BertLayer(nn.Module):
         encoder_attention_mask=None,
         past_key_value=None,
         output_attentions=False,
+        residualess=False,
     ):
         # decoder uni-directional self-attention cached key/values tuple is at positions 1,2
         self_attn_past_key_value = past_key_value[:2] if past_key_value is not None else None
@@ -473,6 +481,7 @@ class BertLayer(nn.Module):
             head_mask,
             output_attentions=output_attentions,
             past_key_value=self_attn_past_key_value,
+            residualess=residualess
         )
         attention_output = self_attention_outputs[0]
 
@@ -508,7 +517,7 @@ class BertLayer(nn.Module):
             present_key_value = present_key_value + cross_attn_present_key_value
 
         layer_output = apply_chunking_to_forward(
-            self.feed_forward_chunk, self.chunk_size_feed_forward, self.seq_len_dim, attention_output
+            partial(self.feed_forward_chunk, residualess=residualess), self.chunk_size_feed_forward, self.seq_len_dim, attention_output
         )
         outputs = (layer_output,) + outputs
 
@@ -518,9 +527,9 @@ class BertLayer(nn.Module):
 
         return outputs
 
-    def feed_forward_chunk(self, attention_output):
+    def feed_forward_chunk(self, attention_output, residualess=False):
         intermediate_output = self.intermediate(attention_output)
-        layer_output = self.output(intermediate_output, attention_output)
+        layer_output = self.output(intermediate_output, attention_output, residualess=residualess)
         return layer_output
 
 
@@ -542,6 +551,7 @@ class BertEncoder(nn.Module):
         output_attentions=False,
         output_hidden_states=False,
         return_dict=True,
+        residualess=False,
     ):
         all_hidden_states = () if output_hidden_states else None
         all_self_attentions = () if output_attentions else None
@@ -587,6 +597,7 @@ class BertEncoder(nn.Module):
                     encoder_attention_mask,
                     past_key_value,
                     output_attentions,
+                    residualess
                 )
 
             hidden_states = layer_outputs[0]
@@ -900,6 +911,7 @@ class BertModel(BertPreTrainedModel):
         output_attentions=None,
         output_hidden_states=None,
         return_dict=None,
+        residualess=False,
     ):
         r"""
         encoder_hidden_states  (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, sequence_length, hidden_size)`, `optional`):
@@ -999,6 +1011,7 @@ class BertModel(BertPreTrainedModel):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
+            residualess=residualess
         )
         sequence_output = encoder_outputs[0]
         pooled_output = self.pooler(sequence_output) if self.pooler is not None else None
@@ -1815,6 +1828,7 @@ class BertForQuestionAnswering(BertPreTrainedModel):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
+            residualess=self.config.residualess
         )
 
         sequence_output = outputs[0]
