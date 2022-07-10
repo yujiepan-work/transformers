@@ -13,16 +13,25 @@
             "type": "long"
         }
     ],
-    "compression": {
+    "compression": 
+    [
+    {
         "algorithm": "hs_sparsity",
-        "sparsity_init": 0.02,
         "params": {
-            "sparsity_target": 0.50,
-            "sparsity_target_epoch": 0.1,
-            "sparsity_freeze_epoch": 2
+            "steps_per_epoch": 5533,
+            "freeze_bias_mask_epoch": 1,
+            // "freeze_weight_mask_epoch": 99999,
+            "weight_penalty": 1,
+            "bias_penalty": 100,
         },
         "ignored_scopes": ["{re}.*NNCFEmbedding", "{re}.*qa_outputs*"]
+    },
+    {
+        "algorithm": "knowledge_distillation",
+        "type": "softmax",
+        "temperature": 3
     }
+    ]
     // "compression": {
     //     "algorithm": "movement_sparsity",
     //     "params": {

@@ -1475,7 +1475,11 @@ class Trainer:
             logs["learning_rate"] = self._get_learning_rate()
 
             if self.compression_ctrl is not None:
-                logs["compression_loss"] = self.compression_ctrl.loss().item()
+                nncf_loss = self.compression_ctrl.loss()
+                if isinstance(nncf_loss, float):
+                    logs["compression_loss"] =nncf_loss
+                else:
+                    logs["compression_loss"] = nncf_loss.item()
                 compression_stats = self.compression_ctrl.statistics()
                 for key, value in prepare_for_tensorboard(compression_stats).items():
                     logs["compression/statistics/{0}".format(key)] = value

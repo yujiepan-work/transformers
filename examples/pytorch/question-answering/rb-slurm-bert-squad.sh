@@ -9,7 +9,7 @@ export WANDB_API_KEY=f8a95080288950342f1695008cd8256adc3b0778
 export WANDB_PROJECT="(hgx1) nncf-hs"
 export CUDA_VISIBLE_DEVICES=0
 
-NEPOCH=2
+NEPOCH=10
 TBS=16
 EBS=64
 SL=384
@@ -19,10 +19,10 @@ DS=128
 # TEMPERATURE=5
 # ALPHA=0.9
 
-BASEM=bert-large-uncased-whole-word-masking
+# BASEM=bert-large-uncased-whole-word-masking
 # BASEM=bert-base-uncased
-# BASEM=bert-large-uncased-whole-word-masking-finetuned-squad
-RUNID=run02-bert-l-pt-squadv1.1-nncf-hs-sl${SL}-ds${DS}-e${NEPOCH}-tbs${TBS}-refactor-stats2
+BASEM=bert-large-uncased-whole-word-masking-finetuned-squad
+RUNID=run02-bert-l-pt-squadv1.1-nncf-hs-sl${SL}-ds${DS}-e${NEPOCH}-tbs${TBS}-wp5000-bp100freeze3eph
 NNCFCFG=/data/vchua/dev/jpqd-alpha/transformers/examples/pytorch/question-answering/rb-bert-squad.json
 
 OUTROOT=/data/vchua/run/jpqd-alpha/nncf-hs
@@ -61,7 +61,7 @@ python run_qa.py \
     --per_device_train_batch_size $TBS \
     --max_seq_length $SL \
     --doc_stride $DS \
-    --save_steps 1000 \
+    --save_steps 10000 \
     --logging_steps 1 \
     --overwrite_output_dir \
     --nncf_config $NNCFCFG \

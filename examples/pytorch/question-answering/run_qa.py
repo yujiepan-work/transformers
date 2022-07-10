@@ -616,6 +616,15 @@ def main():
         compression_ctrl=compression_ctrl
     )
 
+    # TODO (VS): to remove the following
+    if False:
+        import torch
+        from utils import SparsityReporter
+        ckptpth = "/data/vchua/run/jpqd-alpha/nncf-hs/run02-bert-l-pt-squadv1.1-nncf-hs-sl384-ds128-e2-tbs16-schedule-penalty-bias-freeze1eph-fixbug-freezemask/pytorch_model.bin"
+        model.load_state_dict(torch.load(ckptpth))
+        df =  SparsityReporter.per_item_sparsity(model.state_dict(), 1e-5)
+        df = df[df.layer_id.str.contains('bias') & ~df.layer_id.str.contains('LayerNorm')]
+
     # Training
     if training_args.do_train:
         checkpoint = None
@@ -687,6 +696,7 @@ def main():
     # Evaluation
     if training_args.do_eval:
         logger.info("*** Evaluate ***")
+        # compression_ctrl.child_ctrls[0]._propagate_masks()
         metrics = trainer.evaluate()
 
         max_eval_samples = data_args.max_eval_samples if data_args.max_eval_samples is not None else len(eval_dataset)
