@@ -18,6 +18,9 @@ Fine-tuning the library models for question answering using a slightly adapted v
 """
 # You can also adapt this script on your own question answering task. Pointers for this are left as comments.
 
+from openvino.tools.benchmark.benchmark import Benchmark
+
+
 import functools
 import logging
 import os
@@ -584,31 +587,68 @@ def main():
         # [ ] test so that no impact to existing feature
         # [ ] Proper error out on dev (not needed, should error out!)
 
-        from openvino.inference_engine import IECore
-        ie = IECore()
-        ie_session = ie.load_network(network=model_args.eval_ir, device_name="CPU", num_requests=0)
-        model.iesess = ie_session
+        from openvino.runtime import Core, get_version, AsyncInferQueue
+        from openvino.tools.benchmark.utils.constants import XML_EXTENSION, BIN_EXTENSION
 
-        inames = list(ie_session.input_info.keys())
+        ov_core = Core()
+        model_filename = os.path.abspath(model_args.eval_ir)
+        head, ext = os.path.splitext(model_filename)
+        weights_filename = os.path.abspath(head + BIN_EXTENSION) if ext == XML_EXTENSION else ""
+        ov_model = ov_core.read_model(model_filename, weights_filename)
 
-        assert training_args.eval_batch_size == list(ie_session.input_info.values())[0].tensor_desc.dims[0], \
-        "batch size mismatches, set eval_batch_size to {}".format(list(ie_session.input_info.values())[0].tensor_desc.dims[0])
+        compiled_model = ov_core.compile_model(ov_model, "CPU", config=None)
 
-        def ie_fwd_fn(inputs, iesess):
+        # OV 2.0 API
+        requests = [compiled_model.create_infer_request()]
+        request = requests[0]
+
+        inames = [iport.any_name for iport in ov_model.inputs]
+        # shape = list(iport.get_partial_shape().to_shape())
+
+        def ie_fwd_fn(inputs, request):
             # bs = training_args.eval_batch_size #ir usually batch size of 1
-            ie_inputs = {
+            infer_input = {
                             inames[0]: inputs['input_ids'].detach().numpy(), 
                             inames[1]: inputs['attention_mask'].detach().numpy(), 
                             inames[2]: inputs['token_type_ids'].detach().numpy()
                         }
 
-            ireq = iesess.start_async(request_id=0, inputs=ie_inputs)
-            ireq_stat = ireq.wait()
-            outputs = ireq.output_blobs
-            onames = list(ie_session.outputs.keys())
-            return {"start_logits": torch.from_numpy(outputs[onames[0]].buffer), "end_logits": torch.from_numpy(outputs[onames[1]].buffer)}
+            # request.set_input_tensors(infer_inputs)
+            request.infer(inputs=infer_input)
 
-        model.ie_fwd_fn = functools.partial(ie_fwd_fn, iesess=model.iesess)
+            outputs = list(request.results.values())
+
+            return {"start_logits": torch.from_numpy(outputs[0]), "end_logits": torch.from_numpy(outputs[1])}
+
+        model.ie_fwd_fn = functools.partial(ie_fwd_fn, request=request)
+
+        # OV <2.0 api
+        
+        # from openvino.inference_engine import IECore
+        # ie = IECore()
+        # ie_session = ie.load_network(network=model_args.eval_ir, device_name="CPU", num_requests=0)
+        # model.iesess = ie_session
+
+        # inames = list(ie_session.input_info.keys())
+
+        # assert training_args.eval_batch_size == list(ie_session.input_info.values())[0].tensor_desc.dims[0], \
+        # "batch size mismatches, set eval_batch_size to {}".format(list(ie_session.input_info.values())[0].tensor_desc.dims[0])
+
+        # def ie_fwd_fn(inputs, iesess):
+        #     # bs = training_args.eval_batch_size #ir usually batch size of 1
+        #     ie_inputs = {
+        #                     inames[0]: inputs['input_ids'].detach().numpy(), 
+        #                     inames[1]: inputs['attention_mask'].detach().numpy(), 
+        #                     inames[2]: inputs['token_type_ids'].detach().numpy()
+        #                 }
+
+        #     ireq = iesess.start_async(request_id=0, inputs=ie_inputs)
+        #     ireq_stat = ireq.wait()
+        #     outputs = ireq.output_blobs
+        #     onames = list(ie_session.outputs.keys())
+        #     return {"start_logits": torch.from_numpy(outputs[onames[0]].buffer), "end_logits": torch.from_numpy(outputs[onames[1]].buffer)}
+
+        # model.ie_fwd_fn = functools.partial(ie_fwd_fn, iesess=model.iesess)
 
     if model_args.eval_onnx is not None:
         #TODO:
