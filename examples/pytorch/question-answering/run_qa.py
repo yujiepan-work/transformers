@@ -96,7 +96,10 @@ class ModelArguments:
             "with private models)."
         },
     )
-
+    manual_load: str = field(
+        default=None,
+        metadata={"help": "path to checkpoint that has been wrapped with nncf-mvmt-p3, assume checkpoint contains its corresponding nncf checkpoint"},
+    )
 
 @dataclass
 class DataTrainingArguments:
@@ -413,6 +416,11 @@ def main():
 
         return tokenized_examples
 
+    if model_args.manual_load is not None:
+        overriding_nncfcfg = os.path.join(model_args.manual_load, "nncf-mvmt-p3.json")
+        assert os.path.exists(overriding_nncfcfg), "Missing config {}".format(overriding_nncfcfg)
+        training_args.nncf_config = overriding_nncfcfg
+
     if training_args.do_train or (training_args.do_eval and training_args.nncf_config is not None):
         if "train" not in raw_datasets:
             raise ValueError("--do_train requires a train dataset")
@@ -567,6 +575,19 @@ def main():
             os.makedirs(nncf_config["log_dir"])
         import shutil
         shutil.copy(training_args.nncf_config, nncf_config["log_dir"])
+
+        # Note Following overriding is to fasten quantization initialization as we will load with final model weight anyway
+        if model_args.manual_load is not None and 'compression' in nncf_config:
+            override_qcfg_init = dict(range=dict(num_init_samples=32), 
+                                      batchnorm_adaptation=dict(num_bn_adaptation_samples=32))
+
+            if isinstance(nncf_config['compression'], list):
+                for algo in nncf_config['compression']:
+                    if algo['algorithm'] == 'quantization':
+                        algo['initializer'] = override_qcfg_init
+            elif nncf_config['compression']['algorithm'] == 'quantization':
+                nncf_config['compression']['initializer'] = override_qcfg_init
+
         if training_args.do_train or (training_args.do_eval and nncf_config is not None):
             train_dataloader = get_train_dataloader_for_init(training_args, train_dataset, data_collator)
             class SquadInitializingDataloader(PTInitializingDataLoader):
@@ -602,6 +623,23 @@ def main():
         compression_ctrl = None
     else:
         compression_ctrl, model = retval
+
+    if model_args.manual_load is not None:
+        import torch
+        model.load_state_dict(torch.load(os.path.join(model_args.manual_load, "pytorch_model.bin")))
+
+        is_quantized = False
+        if hasattr(compression_ctrl, 'child_ctrls'):
+            for ctrl in compression_ctrl.child_ctrls:
+                if ctrl.__class__.__name__ == 'QuantizationController':
+                    is_quantized=True
+                elif ctrl.__class__.__name__ == 'MovementSparsityController':
+                    mvmt_ctrl = ctrl
+        elif compression_ctrl.__class__.__name__ == 'MovementSparsityController':
+            mvmt_ctrl = compression_ctrl
+
+        if mvmt_ctrl is not None:
+            mvmt_ctrl._propagate_masks()
 
     GEN_ONNX_AT_END = True
     if training_args.to_onnx and GEN_ONNX_AT_END is False:
