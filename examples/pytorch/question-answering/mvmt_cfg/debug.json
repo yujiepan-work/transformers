@@ -1,0 +1,67 @@
+{
+    "input_info": [
+        {
+            "sample_size": [1, 384],
+            "type": "long"
+        },
+        {
+            "sample_size": [1, 384],
+            "type": "long"
+        },
+        {
+            "sample_size": [1, 384],
+            "type": "long"
+        }
+    ],
+    "compression": 
+    [
+        {
+            "algorithm": "movement_sparsity",
+            "params": {
+                "schedule": "threshold_polynomial_decay",
+                "power": 3,
+                "init_importance_threshold": 0.1,
+                "final_importance_threshold": 0.1,
+                "warmup_start_epoch": 0,
+                "warmup_end_epoch": 0,
+                "steps_per_epoch": 5533,
+                "importance_regularization_factor": 0.02,
+                "update_per_optimizer_step": true,
+            },
+            "sparse_structure_by_scopes": [
+                ["block", [32, 32], "{re}.*BertAttention*"],
+                ["per_dim", [0], "{re}.*BertIntermediate*"],
+                ["per_dim", [1], "{re}.*BertOutput*"]
+            ],
+            "ignored_scopes": ["{re}.*NNCFEmbedding", "{re}.*qa_outputs*"]
+        },
+        {
+            "algorithm": "quantization",
+            "initializer": {
+                "range": {
+                    "num_init_samples": 16,
+                    "type": "percentile",
+                    "params":
+                    {
+                        "min_percentile": 0.01,
+                        "max_percentile": 99.99
+                    }
+                },
+
+                "batchnorm_adaptation": {
+                    "num_bn_adaptation_samples": 16
+                }
+            },
+            "activations":
+            {
+                "mode": "symmetric"
+            },
+            "weights":
+            {
+                "mode": "symmetric",
+                "signed": true,
+                "per_channel": false
+            }
+        }
+    ]
+}

@@ -23,6 +23,7 @@ import os
 import sys
 from dataclasses import dataclass, field
 from typing import Optional
+import pdb
 
 import datasets
 import torch
@@ -606,6 +607,7 @@ def main():
             from_tf=bool(".ckpt" in training_args.teacher),
             cache_dir=model_args.cache_dir,
         )
+        # pdb.set_trace()
 
     retval = AutoModelForQuestionAnswering.from_pretrained(
         model_args.model_name_or_path,

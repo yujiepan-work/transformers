@@ -11,6 +11,8 @@ import math
 import os
 
 import numpy
+import pdb
+
 
 class QADistillTrainer(QuestionAnsweringTrainer):
     """
@@ -22,6 +24,7 @@ class QADistillTrainer(QuestionAnsweringTrainer):
     :param distill_temperature: temperature for distillation
     :param args, kwargs: arguments passed into parent class
     """
+
     def __init__(self, *args, teacher=None, hardness=0.5, temperature=2.0, **kwargs):
         super().__init__(*args, **kwargs)
         if teacher is None:
@@ -40,6 +43,7 @@ class QADistillTrainer(QuestionAnsweringTrainer):
         """
         self.loss_counter += 1
         outputs = model(**inputs)
+
         if self.teacher is None:
             loss = outputs["loss"]
         else:
@@ -92,4 +96,3 @@ class QADistillTrainer(QuestionAnsweringTrainer):
             self.metrics = defaultdict(float)
 
         return super().log(logs)
-
