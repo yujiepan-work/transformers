@@ -603,13 +603,16 @@ def main():
             ])
 
     teacher_model = None
+    # import torch
     if training_args.teacher is not None:
         teacher_model = AutoModelForQuestionAnswering.from_pretrained(
             training_args.teacher,
             from_tf=bool(".ckpt" in training_args.teacher),
             cache_dir=model_args.cache_dir,
+            torch_dtype='float16' if training_args.fp16 else 'float32'
         )
-        # pdb.set_trace()
+        if training_args.fp16:
+            teacher_model = teacher_model.half()
 
     retval = AutoModelForQuestionAnswering.from_pretrained(
         model_args.model_name_or_path,
@@ -627,6 +630,9 @@ def main():
         compression_ctrl = None
     else:
         compression_ctrl, model = retval
+        print(dir(model))
+        # if training_args.fp16:
+        #     model = model
 
     if model_args.manual_load is not None:
         import torch
@@ -763,6 +769,7 @@ def main():
         model.to(preonnx_dev)
 
     # Evaluation
+    # print('!!!  Max allocated', torch.cuda.max_memory_allocated())
     if training_args.do_eval:
         logger.info("*** Evaluate ***")
         metrics = trainer.evaluate()
@@ -774,6 +781,7 @@ def main():
         trainer.save_metrics("eval", metrics)
 
     # Prediction
+    # print('!!!  Max allocated', torch.cuda.max_memory_allocated())
     if training_args.do_predict:
         logger.info("*** Predict ***")
         results = trainer.predict(predict_dataset, predict_examples)
@@ -806,4 +814,6 @@ def _mp_fn(index):
 
 
 if __name__ == "__main__":
+    print(os.environ)
     main()
+    
