@@ -212,6 +212,7 @@ def get_train_dataloader_for_init(args, train_dataset, data_collator=None):
     )
     return data_loader
 
+
 class Trainer:
     """
     Trainer is a simple but feature-complete training and eval loop for PyTorch, optimized for 🤗 Transformers.
@@ -452,13 +453,13 @@ class Trainer:
 
         if args.fp16 and not args.deepspeed:  # deepspeed manages its own fp16
             if self.fp16_backend == "amp":
-                self.use_amp = True
+                self.use_amp = True #not args.fp16_full_eval # True
                 if is_sagemaker_mp_enabled():
                     self.scaler = smp.amp.GradScaler()
                 elif self.sharded_ddp is not None:
                     self.scaler = ShardedGradScaler()
                 else:
-                    self.scaler = torch.cuda.amp.GradScaler()
+                    self.scaler = torch.cuda.amp.GradScaler(enabled=(not args.fp16_full_eval))
             else:
                 if not is_apex_available():
                     raise ImportError(
@@ -811,7 +812,7 @@ class Trainer:
         We provide a reasonable default that works well. If you want to use something else, you can pass a tuple in the
         Trainer's init through :obj:`optimizers`, or subclass and override this method in a subclass.
         """
-        # TODO: revision needed. initial nncf movement-sparsity has hardcoded importance learning rate scheduling 
+        # TODO: revision needed. initial nncf movement-sparsity has hardcoded importance learning rate scheduling
         if self.optimizer is None:
             score_params = []
             for n, p in self.model.named_parameters():
@@ -1282,7 +1283,7 @@ class Trainer:
 
         hasfilled = False
         loaded = False
-        cnt=0
+        cnt = 0
         for epoch in range(epochs_trained, num_train_epochs):
             if self.compression_ctrl is not None:
                 self.compression_ctrl.scheduler.epoch_step()
@@ -1378,7 +1379,7 @@ class Trainer:
                                 amp.master_params(self.optimizer) if self.use_apex else model.parameters(),
                                 args.max_grad_norm,
                             )
-                    
+
                     # Optimizer step
                     if self.compression_ctrl is not None:
                         # if self.compression_ctrl.scheduler.current_step+2 >= self.compression_ctrl.scheduler.warmup_end_epoch * self.compression_ctrl.scheduler._steps_per_epoch:
@@ -1398,11 +1399,11 @@ class Trainer:
                                 mvmt_ctrl = self.compression_ctrl
 
                             if mvmt_ctrl.__class__.__name__ == 'MovementSparsityController':
-                                if mvmt_ctrl.scheduler.current_step+1 >= mvmt_ctrl.scheduler.warmup_end_epoch * mvmt_ctrl.scheduler._steps_per_epoch:
+                                if mvmt_ctrl.scheduler.current_step + 1 >= mvmt_ctrl.scheduler.warmup_end_epoch * mvmt_ctrl.scheduler._steps_per_epoch:
                                     mvmt_ctrl.reset_independent_structured_mask()
                                     mvmt_ctrl.resolve_structured_mask()
                                     mvmt_ctrl.populate_structured_mask()
-                                    
+
                                     # if cnt==2:
                                     #     final_smi = deepcopy(mvmt_ctrl.sparsified_module_info)
                                     #     cnt+=1
@@ -1549,14 +1550,13 @@ class Trainer:
                     for cb in self.callback_handler.callbacks:
                         if cb.__class__.__name__ == "TensorBoardCallback":
                             self.tb_callback = cb
-                
+
                 if self.tb_callback is not None and self.tb_callback.tb_writer is not None:
                     with torch.no_grad():
                         for n, p in model.named_parameters():
                             if p.__class__.__name__ == 'CompressionParameter':
-                                label = n[38:].replace("pre_ops.0.op._importance","importance")
+                                label = n[38:].replace("pre_ops.0.op._importance", "importance")
                                 self.tb_callback.tb_writer.add_histogram(label, p, global_step=self.state.global_step)
-                            
 
             self._total_loss_scalar += tr_loss_scalar
             self._globalstep_last_logged = self.state.global_step
@@ -1912,8 +1912,9 @@ class Trainer:
             loss = loss / self.args.gradient_accumulation_steps
 
         if self.compression_ctrl is not None:
-            compression_loss = self.compression_ctrl.loss()
-            loss += compression_loss
+            with autocast(enabled=self.use_amp):
+                compression_loss = self.compression_ctrl.loss()
+                loss += compression_loss
 
         if self.use_amp:
             self.scaler.scale(loss).backward()
@@ -2053,7 +2054,6 @@ class Trainer:
         output_dir = output_dir if output_dir is not None else self.args.output_dir
         os.makedirs(output_dir, exist_ok=True)
         logger.info(f"Saving model checkpoint to {output_dir}")
-
 
         # Save a trained model and configuration using `save_pretrained()`.
         # They can then be reloaded using `from_pretrained()`

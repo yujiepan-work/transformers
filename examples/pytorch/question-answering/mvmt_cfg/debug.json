@@ -23,7 +23,7 @@
                 "init_importance_threshold": 0.1,
                 "final_importance_threshold": 0.1,
                 "warmup_start_epoch": 0,
-                "warmup_end_epoch": 0,
+                "warmup_end_epoch": 2,
                 "steps_per_epoch": 5533,
                 "importance_regularization_factor": 0.02,
                 "update_per_optimizer_step": true,

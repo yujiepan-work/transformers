@@ -243,7 +243,7 @@ def main():
 
     # Log on each process the small summary:
     logger.warning(
-        f"Process rank: {training_args.local_rank}, device: {training_args.device}, n_gpu: {training_args.n_gpu}"
+        f"Process rank: {training_args.local_rank}, device: {training_args.device}, n_gpu: {training_args.n_gpu} "
         + f"distributed training: {bool(training_args.local_rank != -1)}, 16-bits training: {training_args.fp16}"
     )
     logger.info(f"Training/evaluation parameters {training_args}")
@@ -630,9 +630,8 @@ def main():
         compression_ctrl = None
     else:
         compression_ctrl, model = retval
-        print(dir(model))
-        # if training_args.fp16:
-        #     model = model
+        if training_args.fp16 and training_args.fp16_full_eval:
+            model = model.half()
 
     if model_args.manual_load is not None:
         import torch
@@ -816,4 +815,3 @@ def _mp_fn(index):
 if __name__ == "__main__":
     print(os.environ)
     main()
-    
