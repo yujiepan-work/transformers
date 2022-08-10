@@ -165,3 +165,4 @@ tags
 mlruns/
 wandb/
 slurm-*.out
+yujie*
