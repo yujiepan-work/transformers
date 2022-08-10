@@ -247,7 +247,7 @@ def main():
     logger.info(f"Training/evaluation parameters {training_args}")
     logger.info(f"Model parameters {model_args}")
     logger.info(f"Data parameters {data_args}")
-    
+
     # Detecting last checkpoint.
     last_checkpoint = None
     if os.path.isdir(training_args.output_dir) and training_args.do_train and not training_args.overwrite_output_dir:
@@ -418,10 +418,10 @@ def main():
 
         return tokenized_examples
 
-    if model_args.manual_load is not None:
-        overriding_nncfcfg = os.path.join(model_args.manual_load, "nncf-mvmt-p3.json")
-        assert os.path.exists(overriding_nncfcfg), "Missing config {}".format(overriding_nncfcfg)
-        training_args.nncf_config = overriding_nncfcfg
+    # if model_args.manual_load is not None:
+        # overriding_nncfcfg = os.path.join(model_args.manual_load, "nncf-mvmt-p3.json")
+        # assert os.path.exists(overriding_nncfcfg), "Missing config {}".format(overriding_nncfcfg)
+        # training_args.nncf_config = overriding_nncfcfg
 
     if training_args.do_train or (training_args.do_eval and training_args.nncf_config is not None):
         if "train" not in raw_datasets:
@@ -631,7 +631,8 @@ def main():
 
     if model_args.manual_load is not None:
         import torch
-        model.load_state_dict(torch.load(os.path.join(model_args.manual_load, "pytorch_model.bin")))
+        model.load_state_dict(torch.load(os.path.join(model_args.manual_load, "pytorch_model.bin"), map_location='cpu'))
+        logger.info('Loaded from: %s', model_args.manual_load)
 
         is_quantized = False
         if hasattr(compression_ctrl, 'child_ctrls'):
