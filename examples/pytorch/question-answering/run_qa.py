@@ -714,7 +714,7 @@ def main():
     if training_args.to_onnx and GEN_ONNX_AT_END is True:
     # Expecting the following forward signature:
     # (input_ids, attention_mask, token_type_ids, ...)
-        onnx_pth = "{}.onnx".format(trainer.model.__class__.__name__)
+        onnx_pth = "{}_rank{}.onnx".format(trainer.model.__class__.__name__, training_args.local_rank)
         if training_args.output_dir is not None:
             onnx_pth = os.path.join(training_args.output_dir, onnx_pth)
 
@@ -741,7 +741,8 @@ def main():
                     onnx_df = SparsityReporter.per_item_sparsity(onnx_mapper.tensor_nodes)
 
             if training_args.output_dir is not None:
-                csvpath = os.path.join(training_args.output_dir, "{}_onnx_sparsity.csv".format(trainer.model.__class__.__name__))
+                csvpath = os.path.join(training_args.output_dir, "{}_onnx_rank{}_sparsity.csv".format(
+                    trainer.model.__class__.__name__, training_args.local_rank))
                 onnx_df.to_csv(csvpath, index=True)
                 with open(os.path.splitext(csvpath)[0]+'.md', 'w') as f:
                     onnx_df.to_markdown(f)
