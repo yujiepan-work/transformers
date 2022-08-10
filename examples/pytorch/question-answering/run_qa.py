@@ -609,7 +609,7 @@ def main():
             cache_dir=model_args.cache_dir,
             torch_dtype='float16' if training_args.fp16 else 'float32'
         )
-       if training_args.fp16:
+        if training_args.fp16:
             teacher_model = teacher_model.half()
 
     retval = AutoModelForQuestionAnswering.from_pretrained(
