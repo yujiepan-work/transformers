@@ -722,6 +722,7 @@ def main():
     if training_args.to_onnx and GEN_ONNX_AT_END is True:
     # Expecting the following forward signature:
     # (input_ids, attention_mask, token_type_ids, ...)
+        model = model.float()
         onnx_pth = "{}_rank{}.onnx".format(trainer.model.__class__.__name__, training_args.local_rank)
         if training_args.output_dir is not None:
             onnx_pth = os.path.join(training_args.output_dir, onnx_pth)
