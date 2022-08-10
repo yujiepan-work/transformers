@@ -458,7 +458,8 @@ class Trainer:
                 elif self.sharded_ddp is not None:
                     self.scaler = ShardedGradScaler()
                 else:
-                    self.scaler = torch.cuda.amp.GradScaler()
+                    # scaler is not available on half model update
+                    self.scaler = torch.cuda.amp.GradScaler(enabled=(not args.fp16_full_eval))
             else:
                 if not is_apex_available():
                     raise ImportError(
@@ -1912,8 +1913,9 @@ class Trainer:
             loss = loss / self.args.gradient_accumulation_steps
 
         if self.compression_ctrl is not None:
-            compression_loss = self.compression_ctrl.loss()
-            loss += compression_loss
+            with autocast(enabled=self.use_amp):
+                compression_loss = self.compression_ctrl.loss()
+                loss += compression_loss
 
         if self.use_amp:
             self.scaler.scale(loss).backward()

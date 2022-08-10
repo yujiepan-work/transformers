@@ -628,6 +628,8 @@ def main():
         compression_ctrl = None
     else:
         compression_ctrl, model = retval
+    if training_args.fp16 and training_args.fp16_full_eval:
+        model = model.half()
 
     if model_args.manual_load is not None:
         import torch
