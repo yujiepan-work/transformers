@@ -605,7 +605,10 @@ def main():
             training_args.teacher,
             from_tf=bool(".ckpt" in training_args.teacher),
             cache_dir=model_args.cache_dir,
+            torch_dtype='float16' if training_args.fp16 else 'float32'
         )
+       if training_args.fp16:
+            teacher_model = teacher_model.half()
 
     retval = AutoModelForQuestionAnswering.from_pretrained(
         model_args.model_name_or_path,
