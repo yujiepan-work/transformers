@@ -366,7 +366,7 @@ def main():
         )
 
     g = model.get_graph()
-    g.dump_human_readable_graph(model, "w2v2_prune")
+    g.dump_human_readable_graph(model, os.path.join(training_args.output_dir, "w2v2_prune"))
 
     if teacher_model is not None:
         # Initialize our Trainer
