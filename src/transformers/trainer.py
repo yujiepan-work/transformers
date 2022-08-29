@@ -839,6 +839,9 @@ class Trainer:
                     "weight_decay": 0.0,
                 },
             ]
+            if int(os.environ.get('YUJIE_GLOBAL_LR', '0')):
+                optimizer_grouped_parameters[0].pop('lr')
+                
             optimizer_cls = Adafactor if self.args.adafactor else AdamW
             if self.args.adafactor:
                 optimizer_cls = Adafactor
