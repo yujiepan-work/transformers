@@ -867,7 +867,6 @@ class Trainer:
                     "weight_decay": 0.0,
                 },
             ]
-            import os
             if int(os.environ.get('YUJIE_GLOBAL_LR', '0')):
                 optimizer_grouped_parameters[0].pop('lr')
 

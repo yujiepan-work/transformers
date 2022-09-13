@@ -72,7 +72,7 @@ python run_audio_classification.py \
     --seed 0 \
     --run_name $RUNID \
     --output_dir $OUTDIR \
-    --overwrite_output_dir
+    --overwrite_output_dir --push_to_hub
 "
     # --save_total_limit 3 \
 

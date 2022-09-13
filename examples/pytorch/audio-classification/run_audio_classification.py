@@ -395,8 +395,9 @@ def main():
             compression_ctrl=compression_ctrl
         )
 
-    # import torch
-    # trainer.model.load_state_dict(torch.load("/data/vchua/run/optimum-ov/w2v2b-ks/nncf-mvmt/run30-w2v2b-ks-mvmt-bt-10eph-start1-stop4-r0.04/checkpoint-1400/pytorch_model.bin"))
+    import torch
+    trainer.model.load_state_dict(torch.load("/mnt/sh_flex_storage/home/yujiepan/workspace/2207.jpqd-ac/LOGS/ww36/0830.6ede-w2v2-jpqd-ct0-wr.05-nosig-globalLR-4ft-25epo-disable-overflowfix-warm1epo-lr2e-4/pytorch_model.bin"))
+    compression_ctrl.export_model(os.path.join(training_args.output_dir, "quantized.onnx"))
     # Training
     if training_args.do_train:
         checkpoint = None
