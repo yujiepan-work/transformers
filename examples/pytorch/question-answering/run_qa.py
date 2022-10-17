@@ -245,6 +245,8 @@ def main():
         + f"distributed training: {bool(training_args.local_rank != -1)}, 16-bits training: {training_args.fp16}"
     )
     logger.info(f"Training/evaluation parameters {training_args}")
+    logger.info(f"Model parameters {model_args}")
+    logger.info(f"Data parameters {data_args}")
 
     # Detecting last checkpoint.
     last_checkpoint = None
@@ -605,7 +607,10 @@ def main():
             training_args.teacher,
             from_tf=bool(".ckpt" in training_args.teacher),
             cache_dir=model_args.cache_dir,
+            torch_dtype='float16' if training_args.fp16 else 'float32'
         )
+        if training_args.fp16:
+            teacher_model = teacher_model.half()
 
     retval = AutoModelForQuestionAnswering.from_pretrained(
         model_args.model_name_or_path,
@@ -626,7 +631,8 @@ def main():
 
     if model_args.manual_load is not None:
         import torch
-        model.load_state_dict(torch.load(os.path.join(model_args.manual_load, "pytorch_model.bin")))
+        model.load_state_dict(torch.load(os.path.join(model_args.manual_load, "pytorch_model.bin"), map_location='cpu'))
+        logger.info('Loaded from: %s', model_args.manual_load)
 
         is_quantized = False
         if hasattr(compression_ctrl, 'child_ctrls'):
@@ -714,7 +720,7 @@ def main():
     if training_args.to_onnx and GEN_ONNX_AT_END is True:
     # Expecting the following forward signature:
     # (input_ids, attention_mask, token_type_ids, ...)
-        onnx_pth = "{}.onnx".format(trainer.model.__class__.__name__)
+        onnx_pth = "{}_rank{}.onnx".format(trainer.model.__class__.__name__, training_args.local_rank)
         if training_args.output_dir is not None:
             onnx_pth = os.path.join(training_args.output_dir, onnx_pth)
 
@@ -741,7 +747,8 @@ def main():
                     onnx_df = SparsityReporter.per_item_sparsity(onnx_mapper.tensor_nodes)
 
             if training_args.output_dir is not None:
-                csvpath = os.path.join(training_args.output_dir, "{}_onnx_sparsity.csv".format(trainer.model.__class__.__name__))
+                csvpath = os.path.join(training_args.output_dir, "{}_onnx_rank{}_sparsity.csv".format(
+                    trainer.model.__class__.__name__, training_args.local_rank))
                 onnx_df.to_csv(csvpath, index=True)
                 with open(os.path.splitext(csvpath)[0]+'.md', 'w') as f:
                     onnx_df.to_markdown(f)

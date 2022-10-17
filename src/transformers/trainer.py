@@ -827,7 +827,6 @@ class Trainer:
                 {
                     "params": score_params,
                     "weight_decay": 0.0,
-                    "lr": 0.01
                 },
                 {
                     "params": [p for n, p in self.model.named_parameters() if n in decay_parameters],
@@ -838,6 +837,12 @@ class Trainer:
                     "weight_decay": 0.0,
                 },
             ]
+            if self.args.importance_lr is None:
+                logger.info('Using global lr')
+            else:
+                optimizer_grouped_parameters[0]["lr"] = float(self.args.importance_lr)
+                logger.info('Setting importance lr as %f', self.args.importance_lr)
+
             optimizer_cls = Adafactor if self.args.adafactor else AdamW
             if self.args.adafactor:
                 optimizer_cls = Adafactor
@@ -1912,8 +1917,9 @@ class Trainer:
             loss = loss / self.args.gradient_accumulation_steps
 
         if self.compression_ctrl is not None:
-            compression_loss = self.compression_ctrl.loss()
-            loss += compression_loss
+            with autocast(enabled=self.use_amp):
+                compression_loss = self.compression_ctrl.loss()
+                loss += compression_loss
 
         if self.use_amp:
             self.scaler.scale(loss).backward()

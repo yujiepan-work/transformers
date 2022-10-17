@@ -647,6 +647,9 @@ class TrainingArguments:
     nncf_config: str = field(default=None,
                              metadata={"help": "NNCF configuration .json file for compression-enabled training"})
 
+    importance_lr: Optional[float] = field(default=None,
+                             metadata={"help": "lr for importance scores. If not specified, will use the same lr as model weights (i.e., global lr)."})
+
     to_onnx: str = field(default=None,
                          metadata={"help": "Name of the ONNX model file to export the model to."})
 
