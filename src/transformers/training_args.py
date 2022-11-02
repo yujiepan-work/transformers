@@ -999,6 +999,17 @@ class TrainingArguments:
     to_onnx: str = field(default=None,
                          metadata={"help": "Name of the ONNX model file to export the model to."})
 
+    teacher: str = field(
+        default=None,
+        metadata={"help": "teacher of distillation"},
+    )
+    teacher_ratio: float = field(
+        default=0.5, metadata={"help": "teacher hardness in distillation, value between 0 to 1"}
+    )
+    distill_temp: float = field(
+        default=2.0, metadata={"help": "temperature of distillation."}
+    )
+
     def __post_init__(self):
         # Handle --use_env option in torch.distributed.launch (local_rank not passed as an arg then).
         # This needs to happen before any call to self.device or self.n_gpu.

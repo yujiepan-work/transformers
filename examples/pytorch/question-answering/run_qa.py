@@ -56,6 +56,7 @@ from nncf.torch.initialization import PTInitializingDataLoader
 from nncf.config.structures import BNAdaptationInitArgs
 from nncf.config.structures import QuantizationRangeInitArgs
 from nncf.common.utils.tensorboard import prepare_for_tensorboard
+from qa_distill_trainer import QADistillTrainer
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
 check_min_version("4.23.0")
@@ -645,8 +646,22 @@ def main():
             dummy_tensor = torch.ones([1, 384], dtype=torch.long)
             onnx.export(model, (dummy_tensor, dummy_tensor, dummy_tensor), training_args.to_onnx)
 
+    teacher_model = None
+    if training_args.teacher is not None:
+        teacher_model = AutoModelForQuestionAnswering.from_pretrained(
+            training_args.teacher,
+            from_tf=bool(".ckpt" in training_args.teacher),
+            cache_dir=model_args.cache_dir,
+        )
+        if training_args.fp16:
+            teacher_model = teacher_model.half()
+
     # Initialize our Trainer
-    trainer = QuestionAnsweringTrainer(
+    # trainer = QuestionAnsweringTrainer(
+    trainer = QADistillTrainer(
+        teacher=teacher_model,
+        hardness=training_args.teacher_ratio,
+        temperature=training_args.distill_temp,
         model=model,
         args=training_args,
         train_dataset=train_dataset if training_args.do_train else None,
