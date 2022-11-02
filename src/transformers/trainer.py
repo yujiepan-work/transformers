@@ -2081,7 +2081,7 @@ class Trainer:
                 compression_stats = self.compression_ctrl.statistics()
                 for key, value in prepare_for_tensorboard(compression_stats).items():
                     logs["compression/statistics/{0}".format(key)] = value
-                print(compression_stats.to_str())
+                # print(compression_stats.to_str())
 
 
             self._total_loss_scalar += tr_loss_scalar
