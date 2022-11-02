@@ -2538,14 +2538,15 @@ class Trainer:
 
         if self.args.n_gpu > 1:
             loss = loss.mean()  # mean() to average on multi-gpu parallel training
+        
+        if self.compression_ctrl is not None:
+            with self.compute_loss_context_manager():
+                compression_loss = self.compression_ctrl.loss()
+                loss = loss + compression_loss
 
         if self.args.gradient_accumulation_steps > 1 and not self.deepspeed:
             # deepspeed handles loss scaling by gradient_accumulation_steps in its `backward`
             loss = loss / self.args.gradient_accumulation_steps
-
-        if self.compression_ctrl is not None:
-            compression_loss = self.compression_ctrl.loss()
-            loss += compression_loss
 
         if self.do_grad_scaling:
             self.scaler.scale(loss).backward()
