@@ -23,6 +23,8 @@ import os
 import sys
 from dataclasses import dataclass, field
 from typing import Optional
+from unittest.mock import patch
+from functools import partial
 
 import datasets
 import torch
@@ -640,7 +642,8 @@ def main():
     # Expecting the following forward signature:
     # (input_ids, attention_mask, token_type_ids, ...)
         if nncf_config is not None:
-            compression_ctrl.export_model(training_args.to_onnx)
+            with patch("torch.onnx.export", wraps=partial(torch.onnx.export, do_constant_folding=False)):
+                compression_ctrl.export_model(training_args.to_onnx)
         else:
             model.to('cpu')
             dummy_tensor = torch.ones([1, 384], dtype=torch.long)
