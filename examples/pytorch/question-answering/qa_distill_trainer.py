@@ -23,9 +23,6 @@ class QADistillTrainer(QuestionAnsweringTrainer):
     """
     def __init__(self, teacher=None, hardness=0.5, temperature=2.0, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        if teacher is None:
-            raise ValueError("QADistillTrainer requires a valid teacher")
-
         self.teacher = teacher
         self.teacher_device = None
         self.distill_hardness = hardness
