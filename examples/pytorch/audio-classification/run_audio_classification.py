@@ -23,6 +23,7 @@ from random import randint
 from typing import Optional
 
 import datasets
+import torch
 import numpy as np
 from datasets import DatasetDict, load_dataset
 
@@ -37,10 +38,19 @@ from transformers import (
     TrainingArguments,
     set_seed,
 )
+from transformers.trainer import get_train_dataloader_for_init
 from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
 
+from torch import onnx
+
+from nncf import NNCFConfig
+from nncf.torch.initialization import PTInitializingDataLoader
+from nncf.config.structures import BNAdaptationInitArgs
+from nncf.config.structures import QuantizationRangeInitArgs
+from nncf.common.utils.tensorboard import prepare_for_tensorboard
+from nncf.torch import create_compressed_model
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +64,7 @@ def random_subsample(wav: np.ndarray, max_length: float, sample_rate: int = 1600
     """Randomly sample chunks of `max_length` seconds from the input audio"""
     sample_length = int(round(sample_rate * max_length))
     if len(wav) <= sample_length:
-        return wav
+        return np.pad(wav, (0, sample_length - len(wav)))
     random_offset = randint(0, len(wav) - sample_length - 1)
     return wav[random_offset : random_offset + sample_length]
 
@@ -349,6 +359,7 @@ def main():
     if model_args.freeze_feature_encoder:
         model.freeze_feature_encoder()
 
+
     if training_args.do_train:
         if data_args.max_train_samples is not None:
             raw_datasets["train"] = (
@@ -365,6 +376,40 @@ def main():
         # Set the validation transforms
         raw_datasets["eval"].set_transform(val_transforms, output_all_columns=False)
 
+
+    nncf_config = None
+    compression_ctrl = None
+    if training_args.nncf_config is not None:
+        nncf_config = NNCFConfig.from_json(training_args.nncf_config)
+        if nncf_config.get("log_dir") is None:
+            nncf_config["log_dir"] = training_args.output_dir
+        if not os.path.exists(training_args.output_dir) and training_args.local_rank in [-1, 0]:
+            os.makedirs(nncf_config["log_dir"])
+        if training_args.do_train:
+            train_dataloader = get_train_dataloader_for_init(training_args, raw_datasets["train"])
+            class ACInitializingDataloader(PTInitializingDataLoader):
+                def get_inputs(self, dataloader_output):
+                    return (), dataloader_output
+
+            nncf_config.register_extra_structs([
+                QuantizationRangeInitArgs(ACInitializingDataloader(train_dataloader)),
+                BNAdaptationInitArgs(ACInitializingDataloader(train_dataloader)),
+            ])
+
+        compression_ctrl, model = create_compressed_model(
+            model, nncf_config
+        )
+
+    if training_args.to_onnx:
+        if compression_ctrl is not None:
+            compression_ctrl.export_model(training_args.to_onnx)
+        else:
+            model.to('cpu')
+            dummy_tensor = torch.ones([1, 16000], dtype=torch.float)
+            onnx.export(model, (dummy_tensor,), training_args.to_onnx)
+
+    logger.info('Model: %r', model)
+
     # Initialize our trainer
     trainer = Trainer(
         model=model,
@@ -373,6 +418,7 @@ def main():
         eval_dataset=raw_datasets["eval"] if training_args.do_eval else None,
         compute_metrics=compute_metrics,
         tokenizer=feature_extractor,
+        compression_ctrl=compression_ctrl
     )
 
     # Training
