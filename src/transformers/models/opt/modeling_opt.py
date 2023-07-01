@@ -851,9 +851,9 @@ class OPTForCausalLM(OPTPreTrainedModel):
     def forward(
         self,
         input_ids: torch.LongTensor = None,
+        past_key_values: Optional[List[torch.FloatTensor]] = None,
         attention_mask: Optional[torch.Tensor] = None,
         head_mask: Optional[torch.Tensor] = None,
-        past_key_values: Optional[List[torch.FloatTensor]] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         labels: Optional[torch.LongTensor] = None,
         use_cache: Optional[bool] = None,
